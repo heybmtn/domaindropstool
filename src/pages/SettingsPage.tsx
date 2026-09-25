@@ -18,10 +18,46 @@ function NumberField({ label, value, onChange, hint, step }: { label: string; va
   );
 }
 
+interface AuthStatus {
+  mode: "token" | "open";
+  authorized: boolean;
+}
+
+function authMessage(status: AuthStatus, hasToken: boolean): { tone: "success" | "error"; text: string } {
+  if (status.authorized) return { tone: "success", text: "Admin access confirmed. Imports, research and edits are enabled in this browser." };
+  if (status.mode === "open") {
+    return {
+      tone: "error",
+      text: "The Worker has no ADMIN_TOKEN secret yet. Add it in Cloudflare → Workers & Pages → domaindropstool → Settings → Variables and Secrets (type: Secret), then click Save here again.",
+    };
+  }
+  if (!hasToken) return { tone: "error", text: "Enter the ADMIN_TOKEN value you set on the Worker, then click Save." };
+  return { tone: "error", text: "Token saved, but it does not match the Worker's ADMIN_TOKEN secret. Check for typos or extra spaces." };
+}
+
 function AdminAccess() {
   const [token, setToken] = useState(getAdminToken());
   const client = useQueryClient();
-  const auth = useQuery({ queryKey: ["auth"], queryFn: () => api.get<{ mode: string; authorized: boolean }>("/settings/auth") });
+  const toast = useToast();
+  const auth = useQuery({ queryKey: ["auth"], queryFn: () => api.get<AuthStatus>("/settings/auth"), staleTime: 0 });
+  const [checking, setChecking] = useState(false);
+
+  const save = async () => {
+    setChecking(true);
+    setAdminToken(token.trim());
+    try {
+      const status = await client.fetchQuery({ queryKey: ["auth"], queryFn: () => api.get<AuthStatus>("/settings/auth"), staleTime: 0 });
+      const message = authMessage(status, token.trim().length > 0);
+      toast(message.text, message.tone);
+      void client.invalidateQueries({ queryKey: keys.settings });
+    } catch (error) {
+      toast(errorText(error), "error");
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const current = auth.data ? authMessage(auth.data, getAdminToken().length > 0) : null;
   return (
     <Card title="Admin access">
       <div className="space-y-2 p-4 text-sm">
@@ -29,22 +65,21 @@ function AdminAccess() {
           Imports, research and edits require the <code className="mx-1">ADMIN_TOKEN</code> secret set on the Worker. Enter the same
           value here; it is stored only in this browser.
         </p>
-        <div className="flex gap-2">
+        <form
+          className="flex gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void save();
+          }}
+        >
           <input className="input" type="password" autoComplete="off" placeholder="Admin token" value={token} onChange={(e) => setToken(e.target.value)} />
-          <Button
-            variant="primary"
-            onClick={() => {
-              setAdminToken(token.trim());
-              void client.invalidateQueries({ queryKey: ["auth"] });
-            }}
-          >
-            Save
+          <Button type="submit" variant="primary" disabled={checking}>
+            {checking ? "Checking…" : "Save"}
           </Button>
-        </div>
-        {auth.data && (
-          <p>
-            Mode: <Badge>{auth.data.mode}</Badge>{" "}
-            {auth.data.authorized ? <Badge tone="green">authorized</Badge> : <Badge tone="red">not authorized</Badge>}
+        </form>
+        {current && (
+          <p className={current.tone === "success" ? "text-emerald-700" : "text-red-700"}>
+            {current.tone === "success" ? <Badge tone="green">authorized</Badge> : <Badge tone="red">not authorized</Badge>} {current.text}
           </p>
         )}
       </div>
@@ -198,7 +233,7 @@ export function SettingsPage() {
     <div className="space-y-4">
       <PageHeader title="Settings" />
       {s.auth.mode === "open" && (
-        <Banner tone="warning">No ADMIN_TOKEN secret is configured. Admin operations only work in local development.</Banner>
+        <Banner tone="warning">The Worker has no ADMIN_TOKEN secret yet, so imports, research and edits are disabled. Add it in Cloudflare → Workers & Pages → domaindropstool → Settings → Variables and Secrets (type: Secret).</Banner>
       )}
       <AdminAccess />
       <Card title="Nominet">
