@@ -15,15 +15,21 @@ import { AppError } from "./errors";
  */
 export type AuthMode = "token" | "open";
 
+/** The configured token, ignoring surrounding whitespace (easy to paste into the dashboard by accident). */
+function configuredToken(env: Env): string {
+  return env.ADMIN_TOKEN?.trim() ?? "";
+}
+
 export function authMode(env: Env): AuthMode {
-  return env.ADMIN_TOKEN ? "token" : "open";
+  return configuredToken(env) ? "token" : "open";
 }
 
 export async function resolveAdmin(request: Request, env: Env): Promise<string | null> {
   const header = request.headers.get("Authorization") ?? "";
   const bearer = header.startsWith("Bearer ") ? header.slice("Bearer ".length).trim() : "";
-  if (bearer && env.ADMIN_TOKEN && timingSafeEqual(bearer, env.ADMIN_TOKEN)) return "admin-token";
-  if (!env.ADMIN_TOKEN && isDevelopment(env)) return "local-development";
+  const expected = configuredToken(env);
+  if (bearer && expected && timingSafeEqual(bearer, expected)) return "admin-token";
+  if (!expected && isDevelopment(env)) return "local-development";
   return null;
 }
 

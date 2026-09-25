@@ -28,11 +28,11 @@ function authMessage(status: AuthStatus, hasToken: boolean): { tone: "success" |
   if (status.mode === "open") {
     return {
       tone: "error",
-      text: "The Worker has no ADMIN_TOKEN secret yet. Add it in Cloudflare → Workers & Pages → domaindropstool → Settings → Variables and Secrets (type: Secret), then click Save here again.",
+      text: "The Worker cannot see an ADMIN_TOKEN. In Cloudflare go to Workers & Pages → domaindropstool → Settings → Variables and Secrets (not Build variables), add ADMIN_TOKEN with type Secret, then click Save here again.",
     };
   }
   if (!hasToken) return { tone: "error", text: "Enter the ADMIN_TOKEN value you set on the Worker, then click Save." };
-  return { tone: "error", text: "Token saved, but it does not match the Worker's ADMIN_TOKEN secret. Check for typos or extra spaces." };
+  return { tone: "error", text: "Token saved, but it does not match the Worker's ADMIN_TOKEN secret. Check for typos, or set the secret again in Cloudflare and paste the same value here." };
 }
 
 function AdminAccess() {

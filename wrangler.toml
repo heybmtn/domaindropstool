@@ -5,6 +5,8 @@ name = "domaindropstool"
 main = "worker/index.ts"
 compatibility_date = "2026-08-15"
 workers_dev = true
+# Keep variables added in the dashboard when deploying (secrets are always kept).
+keep_vars = true
 
 # React SPA served as static assets; /api/* is always handled by the Worker.
 [assets]
