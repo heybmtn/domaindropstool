@@ -23,7 +23,7 @@ function queryRecord(url: string): Record<string, string> {
 
 domainRoutes.get("/", async (c) => {
   const query = validate(domainListQuerySchema, queryRecord(c.req.url));
-  return c.json(await listDomains(c.env.DB, query));
+  return c.json(await listDomains(c.env.DB, query, { count: c.req.query("count") !== "false" }));
 });
 
 domainRoutes.get("/count", async (c) => {

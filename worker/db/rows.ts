@@ -20,6 +20,7 @@ export interface DomainDbRow {
   length: number;
   hyphens: number;
   digits: number;
+  word_count?: number | null;
   roid: string | null;
   drop_date: string | null;
   drop_time: string | null;
@@ -41,14 +42,16 @@ export interface DomainDbRow {
   created_at: string;
   updated_at: string;
   note_count?: number;
+  is_shortlisted?: number;
 }
 
 /** Columns selected for table rows (keeps payloads small). */
-export const DOMAIN_COLUMNS = `d.id, d.domain, d.tld, d.sld, d.length, d.hyphens, d.digits, d.roid, d.drop_date, d.drop_time,
+export const DOMAIN_COLUMNS = `d.id, d.domain, d.tld, d.sld, d.length, d.hyphens, d.digits, d.word_count, d.roid, d.drop_date, d.drop_time,
   d.status, d.user_status, d.research_status, d.last_researched_at, d.latest_metrics_id, d.latest_backlinks,
   d.latest_referring_domains, d.latest_referring_pages, d.latest_organic_traffic, d.latest_organic_keywords,
   d.latest_traffic_value, d.latest_authority, d.research_score, d.first_seen_at, d.last_seen_at, d.created_at,
-  d.updated_at, (SELECT COUNT(*) FROM notes n WHERE n.domain_id = d.id) AS note_count`;
+  d.updated_at, (SELECT COUNT(*) FROM notes n WHERE n.domain_id = d.id) AS note_count,
+  EXISTS (SELECT 1 FROM favourites f WHERE f.domain_id = d.id) AS is_shortlisted`;
 
 export function toDomainRow(row: DomainDbRow): DomainRow {
   return {
@@ -59,6 +62,7 @@ export function toDomainRow(row: DomainDbRow): DomainRow {
     length: row.length,
     hyphens: row.hyphens,
     digits: row.digits,
+    wordCount: row.word_count ?? null,
     dropDate: row.drop_date,
     dropTime: row.drop_time,
     status: row.status,
@@ -75,6 +79,7 @@ export function toDomainRow(row: DomainDbRow): DomainRow {
     researchScore: row.research_score,
     firstSeenAt: row.first_seen_at,
     noteCount: row.note_count ?? 0,
+    isShortlisted: row.is_shortlisted === 1,
   };
 }
 

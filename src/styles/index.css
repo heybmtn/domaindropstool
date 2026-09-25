@@ -7,7 +7,7 @@
 
 @layer base {
   html {
-    font-size: 14px;
+    font-size: 16px;
   }
   button:not(:disabled),
   [role="button"]:not(:disabled) {

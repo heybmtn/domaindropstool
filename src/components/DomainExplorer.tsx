@@ -1,16 +1,18 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { DomainRow, Paginated } from "../../shared/api";
 import { activeFilterCount, filterToSearchParams, USER_STATUSES, type DomainFilter, type UserStatus } from "../../shared/filters";
 import { toApiQuery, useDomainQueryState, type DomainQueryState } from "../hooks/useDomainQueryState";
 import { useLocalStorageState } from "../hooks/useLocalStorageState";
 import { api, downloadCsv, errorText } from "../lib/api";
 import { formatNumber } from "../lib/format";
-import { keys, useSavedFilters, useSetUserStatus, useShortlist } from "../lib/queries";
+import { DEFAULT_REGISTRAR } from "../../shared/registrar";
+import { keys, useSavedFilters, useSetUserStatus, useSettings, useShortlist, useUnshortlist } from "../lib/queries";
 import { ColumnPicker } from "./ColumnPicker";
 import { DEFAULT_VISIBLE_COLUMNS } from "./domainColumns";
 import { DomainTable } from "./DomainTable";
 import { FilterPanel } from "./FilterPanel";
+import { LengthInputs } from "./LengthInputs";
 import { Pagination } from "./Pagination";
 import { ResearchConfirmModal } from "./ResearchConfirmModal";
 import { SaveFilterModal } from "./SaveFilterModal";
@@ -27,7 +29,9 @@ interface QuickFilter {
 const QUICK_FILTERS: QuickFilter[] = [
   { label: "Drops today", patch: { dropDate: "today" }, isActive: (f) => f.dropDate === "today" },
   { label: "Tomorrow", patch: { dropDate: "tomorrow" }, isActive: (f) => f.dropDate === "tomorrow" },
-  { label: "≤ 10 chars", patch: { maxLength: 10 }, isActive: (f) => f.maxLength === 10 },
+  { label: "1 word", patch: { words: 1 }, isActive: (f) => f.words === 1 },
+  { label: "2 words", patch: { words: 2 }, isActive: (f) => f.words === 2 },
+  { label: "3 words", patch: { words: 3 }, isActive: (f) => f.words === 3 },
   { label: "No hyphens", patch: { hasHyphen: false }, isActive: (f) => f.hasHyphen === false },
   { label: "No numbers", patch: { hasNumbers: false }, isActive: (f) => f.hasNumbers === false },
   { label: "Researched", patch: { research: "completed" }, isActive: (f) => f.research === "completed" },
@@ -61,14 +65,30 @@ export function DomainExplorer({
   const [researchTarget, setResearchTarget] = useState<{ ids?: number[]; filter?: DomainFilter } | null>(null);
   const [saveOpen, setSaveOpen] = useState(false);
   const shortlist = useShortlist();
+  const unshortlist = useUnshortlist();
   const setStatus = useSetUserStatus();
   const savedFilters = useSavedFilters();
+  const settings = useSettings();
+  const columnContext = useMemo(
+    () => ({ registrar: settings.data?.registrar ?? DEFAULT_REGISTRAR }),
+    [settings.data?.registrar],
+  );
+  // Optimistic shortlist state until the list refetches.
+  const [starOverrides, setStarOverrides] = useState<Map<number, boolean>>(new Map());
 
   const effectiveFilter = useMemo(() => ({ ...state.filter, ...fixedFilter }), [state.filter, fixedFilter]);
-  const apiQuery = toApiQuery({ ...state, filter: effectiveFilter });
+  const apiQuery = `${toApiQuery({ ...state, filter: effectiveFilter })}&count=false`;
   const query = useQuery({
     queryKey: keys.domains(apiQuery),
     queryFn: () => api.get<Paginated<DomainRow>>(`/domains?${apiQuery}`),
+    placeholderData: keepPreviousData,
+  });
+  // Counted once per filter (not per page or sort): counting scans every matching row.
+  const filterQuery = filterToSearchParams(effectiveFilter).toString();
+  const countQuery = useQuery({
+    queryKey: keys.domainCount(filterQuery),
+    queryFn: () => api.get<{ total: number }>(`/domains/count?${filterQuery}`),
+    staleTime: 5 * 60_000,
     placeholderData: keepPreviousData,
   });
 
@@ -79,9 +99,30 @@ export function DomainExplorer({
   }, [JSON.stringify(effectiveFilter)]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const rows = query.data?.items ?? [];
-  const total = query.data?.total ?? 0;
+  const rowsOnPage = query.data?.items.length ?? 0;
+  const total = countQuery.data?.total ?? null;
+  const hasMore = total === null ? rowsOnPage === state.pageSize : state.page * state.pageSize < total;
   const selectedIds = [...selected];
-  const selectionCount = allFilteredSelected ? total : selectedIds.length;
+  const selectionCount = allFilteredSelected ? (total ?? 0) : selectedIds.length;
+
+  // Server data has caught up once the list refetches; drop optimistic overrides.
+  useEffect(() => setStarOverrides(new Map()), [query.dataUpdatedAt]);
+
+  const isStarred = useCallback(
+    (row: DomainRow) => starOverrides.get(row.id) ?? row.isShortlisted,
+    [starOverrides],
+  );
+  const toggleStar = async (row: DomainRow) => {
+    const next = !isStarred(row);
+    setStarOverrides((current) => new Map(current).set(row.id, next));
+    try {
+      if (next) await shortlist.mutateAsync([row.id]);
+      else await unshortlist.mutateAsync(row.id);
+    } catch (error) {
+      setStarOverrides((current) => new Map(current).set(row.id, !next));
+      toast(errorText(error), "error");
+    }
+  };
 
   const toggle = (id: number) => {
     setAllFilteredSelected(false);
@@ -170,6 +211,12 @@ export function DomainExplorer({
 
       {/* Quick filters */}
       <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-100 px-3 py-2">
+        <LengthInputs
+          min={state.filter.minLength}
+          max={state.filter.maxLength}
+          onChange={(minLength, maxLength) => state.patchFilter({ minLength, maxLength })}
+        />
+        <span className="mx-1 h-5 w-px bg-slate-200" aria-hidden />
         {QUICK_FILTERS.map((quick) => {
           const active = quick.isActive(state.filter);
           return (
@@ -181,14 +228,14 @@ export function DomainExplorer({
                   active ? Object.fromEntries(Object.keys(quick.patch).map((key) => [key, undefined])) : quick.patch,
                 )
               }
-              className={`rounded-full border px-2.5 py-0.5 text-xs ${active ? "border-blue-600 bg-blue-600 text-white" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"}`}
+              className={`rounded-full border px-3 py-1 text-sm ${active ? "border-blue-600 bg-blue-600 text-white" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"}`}
             >
               {quick.label}
             </button>
           );
         })}
         {filterCount > 0 && (
-          <button type="button" className="ml-1 text-xs text-slate-500 underline" onClick={() => state.setFilter({})}>
+          <button type="button" className="ml-1 text-sm text-slate-500 underline" onClick={() => state.setFilter({})}>
             Clear
           </button>
         )}
@@ -207,7 +254,7 @@ export function DomainExplorer({
             "Select domains to research, shortlist or export"
           )}
         </span>
-        {selected.size > 0 && !allFilteredSelected && total > rows.length && rows.every((row) => selected.has(row.id)) && (
+        {selected.size > 0 && !allFilteredSelected && total !== null && total > rows.length && rows.every((row) => selected.has(row.id)) && (
           <button type="button" className="text-xs text-blue-700 underline" onClick={() => setAllFilteredSelected(true)}>
             Select all {formatNumber(total)} matching
           </button>
@@ -221,7 +268,7 @@ export function DomainExplorer({
           >
             Research Selected
           </Button>
-          <Button size="sm" disabled={total === 0} onClick={() => setResearchTarget({ filter: effectiveFilter })}>
+          <Button size="sm" disabled={total === 0 || rowsOnPage === 0} onClick={() => setResearchTarget({ filter: effectiveFilter })}>
             Research All Filtered
           </Button>
           <Button
@@ -275,10 +322,21 @@ export function DomainExplorer({
           selected={selected}
           onToggle={toggle}
           onTogglePage={togglePage}
+          isStarred={isStarred}
+          onToggleStar={toggleStar}
+          context={columnContext}
           loading={query.isFetching}
         />
       )}
-      <Pagination page={state.page} pageSize={state.pageSize} total={total} onPage={state.setPage} onPageSize={state.setPageSize} />
+      <Pagination
+        page={state.page}
+        pageSize={state.pageSize}
+        total={total}
+        rowsOnPage={rowsOnPage}
+        hasMore={hasMore}
+        onPage={state.setPage}
+        onPageSize={state.setPageSize}
+      />
 
       <ResearchConfirmModal
         open={researchTarget !== null}

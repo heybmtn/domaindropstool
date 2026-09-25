@@ -15,6 +15,8 @@ import { api } from "./api";
 export const keys = {
   stats: ["stats"] as const,
   domains: (query: string) => ["domains", query] as const,
+  /** Count per filter (not per page/sort), shared by the table and the research modal. */
+  domainCount: (filterQuery: string) => ["domains-count", filterQuery] as const,
   domain: (id: number) => ["domain", id] as const,
   queue: ["queue"] as const,
   settings: ["settings"] as const,
@@ -44,6 +46,7 @@ export function useInvalidateDomains() {
   return () =>
     Promise.all([
       client.invalidateQueries({ queryKey: ["domains"] }),
+      client.invalidateQueries({ queryKey: ["domains-count"] }),
       client.invalidateQueries({ queryKey: ["domain"] }),
       client.invalidateQueries({ queryKey: keys.stats }),
       client.invalidateQueries({ queryKey: keys.queue }),

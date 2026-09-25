@@ -170,10 +170,9 @@ export function Card({ title, actions, children, className = "" }: { title?: str
   );
 }
 
-export function StatCard({ label, value, hint, tone = "slate" }: { label: string; value: ReactNode; hint?: ReactNode; tone?: "slate" | "blue" | "green" | "amber" }) {
-  const accents = { slate: "border-l-slate-300", blue: "border-l-blue-500", green: "border-l-emerald-500", amber: "border-l-amber-500" };
+export function StatCard({ label, value, hint }: { label: string; value: ReactNode; hint?: ReactNode }) {
   return (
-    <div className={`card border-l-4 px-4 py-3 ${accents[tone]}`}>
+    <div className="card px-4 py-3">
       <div className="text-xs font-medium tracking-wide text-slate-500 uppercase">{label}</div>
       <div className="tabular mt-1 text-2xl font-semibold text-slate-900">{value}</div>
       {hint && <div className="mt-0.5 text-xs text-slate-500">{hint}</div>}

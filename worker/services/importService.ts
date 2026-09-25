@@ -1,8 +1,10 @@
 import type { ImportBatchDto } from "../../shared/api";
 import { lexicalFeatures, parseDomain, SUPPORTED_TLDS, type TldPolicy } from "../../shared/domain";
 import { londonDate } from "../../shared/time";
+import { refreshImportStats } from "./settings";
+import { countWords } from "./wordSegmenter";
 import { toImportBatchDto, type ImportBatchDbRow } from "../db/rows";
-import { parseDropListLines, readLines, toTextStream } from "../providers/nominet/parse";
+import { parseDropListBatches, readLineBatches, toTextStream } from "../providers/nominet/parse";
 import type { DropListProvider, DropListSource } from "../providers/types";
 import { sha256Hex } from "../utils/crypto";
 import { AppError, errorMessage } from "../utils/errors";
@@ -26,10 +28,12 @@ import { logger } from "../utils/logger";
 const ROWS_PER_STATEMENT = 500;
 /** Statements per D1 batch round-trip. */
 const STATEMENTS_PER_BATCH = 10;
-/** Rows staged per chunk (~450 KB of JSON; D1 rows may be up to 2 MB). */
-const DEFAULT_CHUNK_ROWS = 5_000;
-/** Chunk rows written per D1 batch while staging. */
-const CHUNK_INSERTS_PER_BATCH = 10;
+/** Rows staged per chunk (~230 KB of JSON; D1 rows may be up to 2 MB). */
+const DEFAULT_CHUNK_ROWS = 2_000;
+/** Chunk rows written per D1 batch while staging (~1 MB per request). */
+const CHUNK_INSERTS_PER_BATCH = 5;
+/** Parsed rows between prepare-phase heartbeats. */
+const PREPARE_HEARTBEAT_ROWS = 50_000;
 /** A running batch with no progress for this long is assumed dead (e.g. Worker evicted). */
 const STALE_RUNNING_MS = 30 * 60 * 1000;
 /** Default wall-time budget for loading chunks in one invocation. */
@@ -74,14 +78,16 @@ type DomainTuple = [
   roid: string | null,
   dropDate: string | null,
   dropTime: string | null,
+  wordCount: number | null,
 ];
 
 const UPSERT_SQL = `
-INSERT INTO domains (domain, tld, sld, length, hyphens, digits, roid, drop_date, drop_time, status,
+INSERT INTO domains (domain, tld, sld, length, hyphens, digits, roid, drop_date, drop_time, word_count, status,
                      first_seen_at, last_seen_at, last_import_batch_id, created_at, updated_at)
 SELECT json_extract(j.value, '$[0]'), json_extract(j.value, '$[1]'), json_extract(j.value, '$[2]'),
        json_extract(j.value, '$[3]'), json_extract(j.value, '$[4]'), json_extract(j.value, '$[5]'),
        json_extract(j.value, '$[6]'), json_extract(j.value, '$[7]'), json_extract(j.value, '$[8]'),
+       json_extract(j.value, '$[9]'),
        'listed', ?2, ?2, ?3, ?2, ?2
 FROM json_each(?1) AS j
 WHERE true
@@ -89,6 +95,7 @@ ON CONFLICT(domain) DO UPDATE SET
   roid = COALESCE(excluded.roid, domains.roid),
   drop_date = COALESCE(excluded.drop_date, domains.drop_date),
   drop_time = COALESCE(excluded.drop_time, domains.drop_time),
+  word_count = excluded.word_count,
   status = 'listed',
   last_seen_at = excluded.last_seen_at,
   last_import_batch_id = excluded.last_import_batch_id,
@@ -142,8 +149,8 @@ async function createBatch(db: D1Database, source: string, sourceUrl: string | n
   try {
     const row = await db
       .prepare(
-        `INSERT INTO import_batches (source, source_url, status, started_at, created_at)
-         VALUES (?1, ?2, 'running', ?3, ?3) RETURNING id`,
+        `INSERT INTO import_batches (source, source_url, status, phase, started_at, created_at, heartbeat_at)
+         VALUES (?1, ?2, 'running', 'preparing', ?3, ?3, ?3) RETURNING id`,
       )
       .bind(source, sourceUrl, now.toISOString())
       .first<{ id: number }>();
@@ -311,6 +318,7 @@ async function prepareImport(
       source.bytes,
       options.tlds ?? SUPPORTED_TLDS,
       options.chunkRows ?? DEFAULT_CHUNK_ROWS,
+      now,
     );
 
     const timestamp = now().toISOString();
@@ -454,6 +462,7 @@ async function finaliseImport(db: D1Database, batchId: number, now: Date): Promi
       .bind(batchId, inserted, row.valid_records - inserted + row.in_file_duplicates, removed, now.toISOString()),
     db.prepare("DELETE FROM import_chunks WHERE batch_id = ?").bind(batchId),
   ]);
+  await refreshImportStats(db, now);
   logger.info("import.completed", { batchId, inserted, removed, valid: row.valid_records });
 }
 
@@ -496,6 +505,7 @@ async function stageChunks(
   bytes: Uint8Array,
   tlds: readonly TldPolicy[],
   chunkRows: number,
+  now: () => Date,
 ): Promise<StageStats> {
   const stats: StageStats = {
     total: 0,
@@ -524,28 +534,38 @@ async function stageChunks(
     if (pending.length >= CHUNK_INSERTS_PER_BATCH) await flushInserts();
   };
 
-  for await (const record of parseDropListLines(readLines(toTextStream(bytes)))) {
-    stats.total += 1;
-    const parsed = parseDomain(record.rawDomain, tlds);
-    if (!parsed.ok) {
-      if (parsed.reason === "unsupported_tld") stats.unsupported += 1;
-      else stats.invalid += 1;
-      continue;
-    }
-    const { domain, tld, sld } = parsed.value;
-    if (seen.has(domain)) {
-      stats.inFileDuplicates += 1;
-      continue;
-    }
-    seen.add(domain);
-    stats.valid += 1;
+  let nextHeartbeat = PREPARE_HEARTBEAT_ROWS;
+  for await (const records of parseDropListBatches(readLineBatches(toTextStream(bytes)))) {
+    for (const record of records) {
+      stats.total += 1;
+      const parsed = parseDomain(record.rawDomain, tlds);
+      if (!parsed.ok) {
+        if (parsed.reason === "unsupported_tld") stats.unsupported += 1;
+        else stats.invalid += 1;
+        continue;
+      }
+      const { domain, tld, sld } = parsed.value;
+      if (seen.has(domain)) {
+        stats.inFileDuplicates += 1;
+        continue;
+      }
+      seen.add(domain);
+      stats.valid += 1;
 
-    // Drop dates are UK calendar days; the exact instant stays in drop_time (UTC).
-    const dropDate = record.dropTime ? londonDate(record.dropTime) : null;
-    if (dropDate && (stats.minDropDate === null || dropDate < stats.minDropDate)) stats.minDropDate = dropDate;
-    const { length, hyphens, digits } = lexicalFeatures(sld);
-    rows.push([domain, tld, sld, length, hyphens, digits, record.roid, dropDate, record.dropTime]);
-    if (rows.length >= chunkRows) await flushChunk();
+      // Drop dates are UK calendar days; the exact instant stays in drop_time (UTC).
+      const dropDate = record.dropTime ? londonDate(record.dropTime) : null;
+      if (dropDate && (stats.minDropDate === null || dropDate < stats.minDropDate)) stats.minDropDate = dropDate;
+      const { length, hyphens, digits } = lexicalFeatures(sld);
+      rows.push([domain, tld, sld, length, hyphens, digits, record.roid, dropDate, record.dropTime, countWords(sld)]);
+      if (rows.length >= chunkRows) await flushChunk();
+    }
+    if (stats.total >= nextHeartbeat) {
+      nextHeartbeat += PREPARE_HEARTBEAT_ROWS;
+      await db
+        .prepare("UPDATE import_batches SET heartbeat_at = ?2, total_records = ?3 WHERE id = ?1")
+        .bind(batchId, now().toISOString(), stats.total)
+        .run();
+    }
   }
   await flushChunk();
   await flushInserts();

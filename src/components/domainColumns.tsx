@@ -1,5 +1,6 @@
 import { Link } from "react-router";
 import type { DomainRow } from "../../shared/api";
+import { registrarLabel, registrarUrl, type RegistrarSettings } from "../../shared/registrar";
 import type { SortField } from "../../shared/filters";
 import { formatCompact, formatDate, formatDropClock, formatDropDay, formatMoney, formatNumber, formatUtc, relativeDays, timeUntil } from "../lib/format";
 import { DomainStatusBadge, ResearchBadge, UserStatusBadge } from "./ui";
@@ -11,7 +12,39 @@ export interface DomainColumn {
   sort?: SortField;
   align?: "right";
   defaultVisible: boolean;
-  render: (row: DomainRow) => React.ReactNode;
+  render: (row: DomainRow, context: ColumnContext) => React.ReactNode;
+}
+
+export interface ColumnContext {
+  registrar: RegistrarSettings;
+}
+
+/** Domain name opens the registrar's availability search in a new tab; the icon opens the details page. */
+function DomainCell({ row, registrar }: { row: DomainRow; registrar: RegistrarSettings }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <a
+        href={registrarUrl(registrar, row.domain)}
+        target="_blank"
+        rel="noopener noreferrer"
+        title={`Check availability on ${registrarLabel(registrar)} (opens a new tab)`}
+        className="font-medium text-blue-800 hover:underline"
+      >
+        {row.sld}
+        <span className="text-slate-400">.{row.tld}</span>
+      </a>
+      <Link
+        to={`/domains/${row.id}`}
+        aria-label={`View details for ${row.domain}`}
+        title="View details"
+        className="rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+      >
+        <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4" aria-hidden="true">
+          <path fillRule="evenodd" d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Zm-7-4a1 1 0 1 1-2 0 1 1 0 0 1 2 0ZM9 9a.75.75 0 0 0 0 1.5h.253a.25.25 0 0 1 .244.304l-.459 2.066A1.75 1.75 0 0 0 10.747 15H11a.75.75 0 0 0 0-1.5h-.253a.25.25 0 0 1-.244-.304l.459-2.066A1.75 1.75 0 0 0 9.253 9H9Z" clipRule="evenodd" />
+        </svg>
+      </Link>
+    </span>
+  );
 }
 
 function DropTimeCell({ dropTime, dropDate }: { dropTime: string | null; dropDate: string | null }) {
@@ -38,14 +71,10 @@ export const DOMAIN_COLUMNS: DomainColumn[] = [
   {
     key: "domain",
     label: "Domain",
+    title: "Click a domain to check availability at your registrar (Settings → Registrar). The ⓘ icon opens its details.",
     sort: "domain",
     defaultVisible: true,
-    render: (row) => (
-      <Link to={`/domains/${row.id}`} className="font-medium text-blue-800 hover:underline">
-        {row.sld}
-        <span className="text-slate-400">.{row.tld}</span>
-      </Link>
-    ),
+    render: (row, context) => <DomainCell row={row} registrar={context.registrar} />,
   },
   {
     key: "dropDate",

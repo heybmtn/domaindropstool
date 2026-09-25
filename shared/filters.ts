@@ -69,6 +69,8 @@ export const domainFilterSchema = z
     hasHyphen: booleanLike.optional(),
     maxHyphens: count.optional(),
     maxNumbers: count.optional(),
+    /** Heuristic word count (1–10); unknown labels never match. */
+    words: z.coerce.number().int().min(1).max(10).optional(),
     // SEO (latest snapshot)
     minBacklinks: count.optional(),
     maxBacklinks: count.optional(),
