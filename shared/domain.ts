@@ -28,7 +28,7 @@ export interface ParsedDomain {
  * removes surrounding quotes and a single trailing dot.
  */
 export function normaliseDomain(raw: string): string {
-  let value = raw.replace(/^﻿/, "").replace(/ /g, " ").trim();
+  let value = raw.replace(/^\uFEFF/, "").replace(/\u00A0/g, " ").trim();
   if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
     value = value.slice(1, -1).trim();
   }

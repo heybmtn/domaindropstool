@@ -9,7 +9,17 @@ export default defineConfig(async () => {
         main: "./worker/index.ts",
         wrangler: { configPath: "./wrangler.toml" },
         miniflare: {
-          bindings: { TEST_MIGRATIONS: migrations, ENVIRONMENT: "test", ADMIN_TOKEN: "test-admin-token" },
+          // Pin every env value tests depend on so a developer's .dev.vars cannot leak in.
+          bindings: {
+            TEST_MIGRATIONS: migrations,
+            ENVIRONMENT: "test",
+            ADMIN_TOKEN: "test-admin-token",
+            USE_MOCK_SEO_PROVIDER: "false",
+            DATAFORSEO_LOGIN: "",
+            DATAFORSEO_PASSWORD: "",
+            ACCESS_TEAM_DOMAIN: "",
+            ACCESS_AUD: "",
+          },
         },
       }),
     ],

@@ -7,7 +7,7 @@ describe("normaliseDomain", () => {
     expect(normaliseDomain("example.co.uk.")).toBe("example.co.uk");
     expect(normaliseDomain("  example.co.uk \t")).toBe("example.co.uk");
     expect(normaliseDomain('"Example.co.uk"')).toBe("example.co.uk");
-    expect(normaliseDomain("﻿example.co.uk")).toBe("example.co.uk");
+    expect(normaliseDomain("\uFEFFexample.co.uk")).toBe("example.co.uk");
   });
 });
 
