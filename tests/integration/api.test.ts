@@ -130,3 +130,23 @@ describe("API", () => {
     expect(JSON.parse(text).dataforseo).toMatchObject({ configured: false });
   });
 });
+
+describe("registrar setting", () => {
+  it("defaults to Namecheap and can be changed by an admin", async () => {
+    const initial = (await (await api("/settings")).json()) as { registrar: unknown };
+    expect(initial.registrar).toEqual({ preset: "namecheap" });
+    const updated = await api("/settings", {
+      method: "PUT",
+      headers: ADMIN,
+      body: JSON.stringify({ registrar: { preset: "godaddy" } }),
+    });
+    expect(updated.status).toBe(200);
+    expect(((await updated.json()) as { registrar: unknown }).registrar).toEqual({ preset: "godaddy" });
+    const bad = await api("/settings", {
+      method: "PUT",
+      headers: ADMIN,
+      body: JSON.stringify({ registrar: { preset: "custom", urlTemplate: "http://evil/{domain}" } }),
+    });
+    expect(bad.status).toBe(400);
+  });
+});

@@ -21,7 +21,8 @@ import {
 } from "../components/ui";
 import { api, errorText } from "../lib/api";
 import { formatCompact, formatDate, formatDropTime, formatMoney, formatNumber, formatUtc, relativeDays, timeUntil } from "../lib/format";
-import { keys, useSetUserStatus, useShortlist, useUnshortlist } from "../lib/queries";
+import { DEFAULT_REGISTRAR, registrarLabel, registrarUrl } from "../../shared/registrar";
+import { keys, useSetUserStatus, useSettings, useShortlist, useUnshortlist } from "../lib/queries";
 
 function Stat({ label, value, title }: { label: string; value: React.ReactNode; title?: string }) {
   return (
@@ -210,6 +211,8 @@ export function DomainDetailPage() {
   const shortlist = useShortlist();
   const unshortlist = useUnshortlist();
   const setStatus = useSetUserStatus();
+  const settings = useSettings();
+  const registrar = settings.data?.registrar ?? DEFAULT_REGISTRAR;
 
   if (query.isPending) return <LoadingState label="Loading domain…" />;
   if (query.isError) return <ErrorState message={errorText(query.error)} onRetry={() => query.refetch()} />;
@@ -252,6 +255,14 @@ export function DomainDetailPage() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <a
+            href={registrarUrl(registrar, domain.domain)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Check on {registrarLabel(registrar)} ↗
+          </a>
           <Button variant="primary" onClick={() => setResearchOpen(true)} disabled={domain.researchStatus === "pending" || domain.researchStatus === "processing"}>
             {domain.researchStatus === "completed" ? "Refresh research" : "Research"}
           </Button>

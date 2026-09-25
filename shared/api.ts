@@ -3,6 +3,7 @@ import { domainFilterSchema, USER_STATUSES, type DomainStatus, type UserStatus }
 import type { LocalAnalysis } from "./analysis";
 import type { ScoreLine, ScoreWeights } from "./scoring";
 import { scoreWeightsSchema } from "./scoring";
+import { registrarSettingsSchema, type RegistrarSettings } from "./registrar";
 import type { ResearchWarning } from "./warnings";
 
 /** Shapes exchanged between the Worker API and the React client. */
@@ -30,6 +31,8 @@ export interface DomainRow {
   length: number;
   hyphens: number;
   digits: number;
+  /** Heuristic word count; null when the label could not be segmented. */
+  wordCount: number | null;
   dropDate: string | null;
   dropTime: string | null;
   status: DomainStatus;
@@ -46,6 +49,7 @@ export interface DomainRow {
   researchScore: number | null;
   firstSeenAt: string;
   noteCount: number;
+  isShortlisted: boolean;
 }
 
 export interface MetricsSnapshot {
@@ -215,6 +219,7 @@ export interface SettingsDto {
   nominet: { dropListUrl: string; lastImport: ImportBatchDto | null };
   dataforseo: { configured: boolean; baseUrl: string; mock: boolean };
   auth: { mode: "token" | "open"; tokenRequired: boolean };
+  registrar: RegistrarSettings;
 }
 
 // ---------------------------------------------------------------------------
@@ -258,6 +263,7 @@ export const statusBodySchema = z.object({
 export const settingsUpdateSchema = z.object({
   research: researchSettingsSchema.partial().optional(),
   scoring: scoreWeightsSchema.optional(),
+  registrar: registrarSettingsSchema.optional(),
 });
 
 export interface ResearchEnqueueResult {

@@ -69,9 +69,9 @@ export function QueuePage() {
       {q && (
         <>
           <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <StatCard label="Pending" tone="amber" value={formatNumber(q.counts.pending)} />
-            <StatCard label="Processing" tone="blue" value={formatNumber(q.counts.processing)} />
-            <StatCard label="Completed" tone="green" value={formatNumber(q.counts.completed)} />
+            <StatCard label="Pending" value={formatNumber(q.counts.pending)} />
+            <StatCard label="Processing" value={formatNumber(q.counts.processing)} />
+            <StatCard label="Completed" value={formatNumber(q.counts.completed)} />
             <StatCard label="Failed" value={formatNumber(q.counts.failed)} />
           </div>
           <div className="mb-4 space-y-2">

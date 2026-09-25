@@ -119,6 +119,10 @@ export function buildDomainWhere(filter: DomainFilter, now: Date = new Date()): 
     params.push(`%${escapeLike(stripSuffix(filter.endsWith))}`);
   }
 
+  if (typeof filter.words === "number") {
+    clauses.push("d.word_count = ?");
+    params.push(filter.words);
+  }
   if (filter.hasNumbers !== undefined) clauses.push(filter.hasNumbers ? "d.digits > 0" : "d.digits = 0");
   if (filter.hasHyphen !== undefined) clauses.push(filter.hasHyphen ? "d.hyphens > 0" : "d.hyphens = 0");
 

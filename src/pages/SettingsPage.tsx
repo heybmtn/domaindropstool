@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import type { ResearchSettings, SettingsDto } from "../../shared/api";
+import { REGISTRAR_PRESETS, registrarSettingsSchema, registrarUrl, type RegistrarSettings } from "../../shared/registrar";
 import { DEFAULT_SCORE_WEIGHTS, type ScoreWeights } from "../../shared/scoring";
 import { useToast } from "../components/Toast";
 import { Badge, Banner, Button, Card, ErrorState, LoadingState, PageHeader } from "../components/ui";
@@ -81,6 +82,66 @@ function AdminAccess() {
           <p className={current.tone === "success" ? "text-emerald-700" : "text-red-700"}>
             {current.tone === "success" ? <Badge tone="green">authorized</Badge> : <Badge tone="red">not authorized</Badge>} {current.text}
           </p>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+function RegistrarSection({
+  settings,
+  onSave,
+  saving,
+}: {
+  settings: SettingsDto;
+  onSave: (registrar: RegistrarSettings) => void;
+  saving: boolean;
+}) {
+  const [draft, setDraft] = useState<RegistrarSettings>(settings.registrar);
+  useEffect(() => setDraft(settings.registrar), [settings.registrar]);
+  const parsed = registrarSettingsSchema.safeParse(draft);
+  const example = parsed.success ? registrarUrl(parsed.data, "example.co.uk") : null;
+  return (
+    <Card title="Registrar">
+      <div className="space-y-3 p-4 text-sm">
+        <p className="text-slate-600">Clicking a domain opens this registrar's availability search in a new tab.</p>
+        <div className="flex flex-wrap items-end gap-3">
+          <label>
+            <span className="label">Registrar</span>
+            <select
+              className="input w-48"
+              value={draft.preset}
+              onChange={(event) => setDraft({ ...draft, preset: event.target.value as RegistrarSettings["preset"] })}
+            >
+              {Object.entries(REGISTRAR_PRESETS).map(([key, preset]) => (
+                <option key={key} value={key}>
+                  {preset.label}
+                </option>
+              ))}
+              <option value="custom">Custom URL…</option>
+            </select>
+          </label>
+          {draft.preset === "custom" && (
+            <label className="min-w-80 flex-1">
+              <span className="label">Search URL (use {"{domain}"} where the domain goes)</span>
+              <input
+                className="input"
+                placeholder="https://www.example-registrar.co.uk/search?domain={domain}"
+                value={draft.urlTemplate ?? ""}
+                onChange={(event) => setDraft({ ...draft, urlTemplate: event.target.value })}
+              />
+            </label>
+          )}
+          <Button variant="primary" disabled={saving || !parsed.success} onClick={() => parsed.success && onSave(parsed.data)}>
+            Save registrar
+          </Button>
+        </div>
+        {parsed.success ? (
+          <p className="text-xs text-slate-500">
+            Example: <code className="break-all">{example}</code>
+          </p>
+        ) : (
+          <p className="text-xs text-red-700">{parsed.error.issues[0]?.message}</p>
         )}
       </div>
     </Card>
@@ -216,7 +277,8 @@ export function SettingsPage() {
   const client = useQueryClient();
   const toast = useToast();
   const save = useMutation({
-    mutationFn: (body: { research?: Partial<ResearchSettings>; scoring?: ScoreWeights }) => api.put<SettingsDto>("/settings", body),
+    mutationFn: (body: { research?: Partial<ResearchSettings>; scoring?: ScoreWeights; registrar?: RegistrarSettings }) =>
+      api.put<SettingsDto>("/settings", body),
     onSuccess: (data) => {
       client.setQueryData(keys.settings, data);
       void client.invalidateQueries({ queryKey: keys.queue });
@@ -247,6 +309,7 @@ export function SettingsPage() {
           </p>
         </div>
       </Card>
+      <RegistrarSection settings={s} saving={save.isPending} onSave={(registrar) => save.mutate({ registrar })} />
       <DataForSeoSection settings={s} />
       <ResearchSection settings={s} saving={save.isPending} onSave={(research) => save.mutate({ research })} />
       <ScoringSection settings={s} saving={save.isPending} onSave={(scoring) => save.mutate({ scoring })} />

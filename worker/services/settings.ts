@@ -1,5 +1,6 @@
 import { researchSettingsSchema, type ResearchSettings } from "../../shared/api";
 import { DEFAULT_SCORE_WEIGHTS, scoreWeightsSchema, type ScoreWeights } from "../../shared/scoring";
+import { DEFAULT_REGISTRAR, registrarSettingsSchema, type RegistrarSettings } from "../../shared/registrar";
 import { logger } from "../utils/logger";
 import { nowIso } from "../utils/time";
 
@@ -84,4 +85,15 @@ export async function getQueueControl(db: D1Database): Promise<QueueControl> {
 
 export async function setQueueControl(db: D1Database, control: QueueControl): Promise<void> {
   await writeSetting(db, "queue", control);
+}
+
+export async function getRegistrarSettings(db: D1Database): Promise<RegistrarSettings> {
+  const parsed = registrarSettingsSchema.safeParse(await readSetting(db, "registrar"));
+  return parsed.success ? parsed.data : DEFAULT_REGISTRAR;
+}
+
+export async function updateRegistrarSettings(db: D1Database, registrar: RegistrarSettings): Promise<RegistrarSettings> {
+  const next = registrarSettingsSchema.parse(registrar);
+  await writeSetting(db, "registrar", next);
+  return next;
 }

@@ -21,10 +21,10 @@ export function DashboardPage() {
         }
       />
       <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard label="Today's domains" tone="blue" value={s ? formatNumber(s.todaysDomains) : "…"} hint={s ? formatDate(s.today) : undefined} />
-        <StatCard label="Researched" tone="green" value={s ? formatNumber(s.researched) : "…"} />
+        <StatCard label="Today's domains" value={s ? formatNumber(s.todaysDomains) : "…"} hint={s ? formatDate(s.today) : undefined} />
+        <StatCard label="Researched" value={s ? formatNumber(s.researched) : "…"} />
         <StatCard label="Unresearched" value={s ? formatNumber(s.unresearched) : "…"} />
-        <StatCard label="Shortlisted" tone="amber" value={s ? formatNumber(s.shortlisted) : "…"} />
+        <StatCard label="Shortlisted" value={s ? formatNumber(s.shortlisted) : "…"} />
       </div>
 
       <div className="mb-4 space-y-2">

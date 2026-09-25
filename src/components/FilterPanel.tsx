@@ -111,6 +111,21 @@ export function FilterPanel({ filter, onApply }: { filter: DomainFilter; onApply
         {triState("hasHyphen", "Has hyphen")}
         {numberInput("maxHyphens", "Max hyphens")}
         {numberInput("maxNumbers", "Max numbers")}
+        <label className="col-span-2">
+          <span className="label">Words (heuristic)</span>
+          <select
+            className="input"
+            value={draft.words ?? ""}
+            onChange={(event) => set({ words: event.target.value === "" ? undefined : Number(event.target.value) })}
+          >
+            <option value="">Any</option>
+            {[1, 2, 3, 4].map((n) => (
+              <option key={n} value={n}>
+                {n} word{n === 1 ? "" : "s"}
+              </option>
+            ))}
+          </select>
+        </label>
       </Section>
 
       <Section title="Drop">

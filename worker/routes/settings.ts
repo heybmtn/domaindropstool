@@ -7,8 +7,10 @@ import { ProviderError } from "../providers/types";
 import { getLastCompletedImport } from "../services/importService";
 import {
   getQueueControl,
+  getRegistrarSettings,
   getResearchSettings,
   getScoreWeights,
+  updateRegistrarSettings,
   updateResearchSettings,
   updateScoreWeights,
 } from "../services/settings";
@@ -21,11 +23,12 @@ export const settingsRoutes = new Hono<AppEnv>();
 
 async function buildSettings(c: { env: AppEnv["Bindings"] }): Promise<SettingsDto> {
   const env = c.env;
-  const [research, scoring, queue, lastImport] = await Promise.all([
+  const [research, scoring, queue, lastImport, registrar] = await Promise.all([
     getResearchSettings(env.DB),
     getScoreWeights(env.DB),
     getQueueControl(env.DB),
     getLastCompletedImport(env.DB),
+    getRegistrarSettings(env.DB),
   ]);
   const mode = authMode(env);
   return {
@@ -39,6 +42,7 @@ async function buildSettings(c: { env: AppEnv["Bindings"] }): Promise<SettingsDt
       mock: isMockSeo(env),
     },
     auth: { mode, tokenRequired: mode !== "open" || env.ENVIRONMENT !== "development" },
+    registrar,
   };
 }
 
@@ -48,6 +52,7 @@ settingsRoutes.put("/", requireAdmin, async (c) => {
   const body = validate(settingsUpdateSchema, await readJson(c.req.raw));
   if (body.research) await updateResearchSettings(c.env.DB, body.research);
   if (body.scoring) await updateScoreWeights(c.env.DB, body.scoring);
+  if (body.registrar) await updateRegistrarSettings(c.env.DB, body.registrar);
   logger.info("settings.updated", { actor: c.get("actor"), sections: Object.keys(body) });
   return c.json(await buildSettings(c));
 });

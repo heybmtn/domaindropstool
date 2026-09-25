@@ -46,9 +46,6 @@ export function Layout() {
             </NavLink>
           ))}
         </nav>
-        <p className="px-4 py-3 text-[11px] leading-snug text-slate-500">
-          Research Score and heuristics are prioritisation aids, not valuations.
-        </p>
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">

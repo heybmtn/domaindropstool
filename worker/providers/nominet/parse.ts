@@ -41,6 +41,8 @@ function normaliseHeader(value: string): string {
 
 /** Splits one CSV line (RFC 4180 quoting; fields cannot span lines). */
 export function splitCsvLine(line: string, delimiter = ","): string[] {
+  // Fast path: the Nominet list has no quoted fields.
+  if (!line.includes('"')) return line.split(delimiter).map((field) => field.trim());
   const fields: string[] = [];
   let current = "";
   let inQuotes = false;
@@ -122,9 +124,20 @@ export function detectColumns(firstLineFields: string[]): ColumnMap {
 const UK_DATE = /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/;
 
 /** Parses a drop time into an ISO-8601 UTC string. Naive timestamps are treated as UTC. */
+const ISO_UTC_SECONDS = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})Z$/;
+
 export function parseDropTime(value: string | undefined): string | null {
   const text = value?.trim();
   if (!text) return null;
+
+  // Fast path for the common form "2026-09-25T13:00:00Z" (no Date allocation).
+  const fast = ISO_UTC_SECONDS.exec(text);
+  if (fast) {
+    const [, , month, day, hour, minute, second] = fast;
+    if (+month! >= 1 && +month! <= 12 && +day! >= 1 && +day! <= 31 && +hour! < 24 && +minute! < 60 && +second! < 60) {
+      return `${text.slice(0, 19)}.000Z`;
+    }
+  }
 
   const uk = UK_DATE.exec(text);
   if (uk) {
@@ -141,45 +154,77 @@ export function parseDropTime(value: string | undefined): string | null {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
-/** Yields text lines from a byte stream (handles \n and \r\n). */
-export async function* readLines(stream: ReadableStream<Uint8Array>): AsyncGenerator<string> {
+/**
+ * Yields batches of text lines from a byte stream (handles \n and \r\n).
+ * Batching per decoded chunk avoids a promise per line on large files.
+ */
+export async function* readLineBatches(stream: ReadableStream<Uint8Array>): AsyncGenerator<string[]> {
   const reader = stream.pipeThrough(new TextDecoderStream()).getReader();
-  let buffer = "";
+  let remainder = "";
   for (;;) {
     const { value, done } = await reader.read();
     if (done) break;
-    buffer += value;
-    let newline = buffer.indexOf("\n");
-    while (newline !== -1) {
-      yield buffer.slice(0, newline).replace(/\r$/, "");
-      buffer = buffer.slice(newline + 1);
-      newline = buffer.indexOf("\n");
+    const text = remainder + value;
+    const lines = text.split("\n");
+    remainder = lines.pop() ?? "";
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = lines[i]!;
+      if (line.endsWith("\r")) lines[i] = line.slice(0, -1);
     }
+    if (lines.length > 0) yield lines;
   }
-  if (buffer.length > 0) yield buffer.replace(/\r$/, "");
+  if (remainder.length > 0) yield [remainder.replace(/\r$/, "")];
 }
 
-/** Converts raw lines into drop-list records. Blank lines are ignored. */
-export async function* parseDropListLines(lines: AsyncIterable<string> | Iterable<string>): AsyncGenerator<DropListRecord> {
+/** Yields text lines from a byte stream (handles \n and \r\n). */
+export async function* readLines(stream: ReadableStream<Uint8Array>): AsyncGenerator<string> {
+  for await (const batch of readLineBatches(stream)) yield* batch;
+}
+
+/** Stateful line parser shared by the batch and per-record APIs. */
+function createRecordParser(): (line: string, lineNumber: number) => DropListRecord | null {
   let columns: ColumnMap | null = null;
   let delimiter = ",";
-  let lineNumber = 0;
-  for await (const line of lines) {
-    lineNumber += 1;
-    if (line.trim().length === 0) continue;
+  return (line, lineNumber) => {
+    if (line.trim().length === 0) return null;
     if (columns === null) {
       delimiter = detectDelimiter(line);
-      const fields = splitCsvLine(line, delimiter);
-      columns = detectColumns(fields);
-      if (columns.hasHeader) continue;
+      columns = detectColumns(splitCsvLine(line, delimiter));
+      if (columns.hasHeader) return null;
     }
     const fields = splitCsvLine(line, delimiter);
-    yield {
+    return {
       line: lineNumber,
       rawDomain: fields[columns.domain] ?? "",
       roid: columns.roid !== null ? fields[columns.roid] || null : null,
       dropTime: columns.dropTime !== null ? parseDropTime(fields[columns.dropTime]) : null,
     };
+  };
+}
+
+/** Converts batches of raw lines into batches of drop-list records. Blank lines are ignored. */
+export async function* parseDropListBatches(batches: AsyncIterable<string[]>): AsyncGenerator<DropListRecord[]> {
+  const parse = createRecordParser();
+  let lineNumber = 0;
+  for await (const lines of batches) {
+    const records: DropListRecord[] = [];
+    for (const line of lines) {
+      lineNumber += 1;
+      const record = parse(line, lineNumber);
+      if (record) records.push(record);
+    }
+    if (records.length > 0) yield records;
+  }
+}
+
+/** Converts raw lines into drop-list records. Blank lines are ignored. */
+export async function* parseDropListLines(lines: AsyncIterable<string> | Iterable<string>): AsyncGenerator<DropListRecord> {
+  const parse = createRecordParser();
+  let lineNumber = 0;
+  for await (const line of lines) {
+    lineNumber += 1;
+    const record = parse(line, lineNumber);
+    if (record) yield record;
   }
 }
 

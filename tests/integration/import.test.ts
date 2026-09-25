@@ -56,6 +56,13 @@ describe("importer", () => {
       .prepare("SELECT tld, sld, length, hyphens, digits, drop_date, roid FROM domains WHERE domain = 'shop4you.co.uk'")
       .first();
     expect(row).toEqual({ tld: "co.uk", sld: "shop4you", length: 8, hyphens: 0, digits: 1, drop_date: "2026-09-27", roid: "1011-UK" });
+    const words = await db()
+      .prepare("SELECT domain, word_count FROM domains WHERE domain IN ('example-two.co.uk', 'shop4you.co.uk') ORDER BY domain")
+      .all();
+    expect(words.results).toEqual([
+      { domain: "example-two.co.uk", word_count: 2 },
+      { domain: "shop4you.co.uk", word_count: 2 },
+    ]);
   });
 
   it("is idempotent: the same file is skipped by checksum and never duplicates domains", async () => {

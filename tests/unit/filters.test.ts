@@ -105,3 +105,10 @@ describe("drop-time ordering", () => {
     );
   });
 });
+
+describe("word-count filter", () => {
+  it("filters on the stored word count and parses from the URL", () => {
+    expect(buildDomainWhere({ words: 2 }, NOW)).toEqual({ sql: "WHERE d.word_count = ?", params: [2] });
+    expect(filterFromSearchParams(new URLSearchParams("words=3"))).toEqual({ words: 3 });
+  });
+});
