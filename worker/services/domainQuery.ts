@@ -172,8 +172,11 @@ export function buildOrderBy(sort: SortField, dir: "asc" | "desc"): string {
   // unresearched domains do not crowd the top of metric sorts.
   const direction = dir === "desc" ? "DESC" : "ASC NULLS LAST";
   if (sort === "drop_date") {
-    // Within a day, list domains in the order they drop.
-    return `ORDER BY d.drop_date ${direction}, d.drop_time ${direction}, d.domain ASC`;
+    // Within a day, list domains in the order they drop. Plain ASC/DESC (no NULLS LAST,
+    // no extra tie-break) lets SQLite walk the (…, drop_date, drop_time) indexes and read
+    // only one page of rows instead of sorting every match. Imported rows always have a time.
+    const plain = dir === "desc" ? "DESC" : "ASC";
+    return `ORDER BY d.drop_date ${plain}, d.drop_time ${plain}`;
   }
   const tiebreak = sort === "domain" ? "" : ", d.domain ASC";
   return `ORDER BY ${column} ${direction}${tiebreak}`;

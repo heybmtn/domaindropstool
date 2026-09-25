@@ -4,13 +4,11 @@ import { describe, expect, it } from "vitest";
 import worker from "../../worker/index";
 
 describe("scheduled handler", () => {
-  it("returns its work as a promise so the runtime waits for it (not ctx.waitUntil)", async () => {
-    const waited: Promise<unknown>[] = [];
-    const ctx = { waitUntil: (p: Promise<unknown>) => waited.push(p), passThroughOnException: () => undefined, props: {} };
+  it("returns its work as a promise so the runtime waits for it (it does not use ctx.waitUntil)", async () => {
     const controller = createScheduledController({ cron: "0 0 1 1 *", scheduledTime: Date.now() });
-    const result = worker.scheduled?.(controller, env, ctx as unknown as ExecutionContext);
+    const scheduled = worker.scheduled as unknown as (c: ScheduledController, e: typeof env) => unknown;
+    const result = scheduled(controller, env);
     expect(result).toBeInstanceOf(Promise);
-    expect(waited).toHaveLength(0);
     await result;
   });
 });

@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { filterToSearchParams, type DomainFilter } from "../../shared/filters";
 import { api, errorText } from "../lib/api";
 import { formatNumber } from "../lib/format";
-import { useEnqueueResearch, useQueueState, useSettings } from "../lib/queries";
+import { keys, useEnqueueResearch, useQueueState, useSettings } from "../lib/queries";
 import { Modal } from "./Modal";
 import { useToast } from "./Toast";
 import { Banner, Button, Spinner } from "./ui";
@@ -32,7 +32,7 @@ export function ResearchConfirmModal({
   const settings = useSettings();
   const enqueue = useEnqueueResearch();
   const countQuery = useQuery({
-    queryKey: ["domains-count", filter ? filterToSearchParams(filter).toString() : ""],
+    queryKey: keys.domainCount(filterToSearchParams(filter ?? {}).toString()),
     queryFn: () => api.get<{ total: number }>(`/domains/count?${filterToSearchParams(filter ?? {}).toString()}`),
     enabled: open && filter !== undefined,
   });

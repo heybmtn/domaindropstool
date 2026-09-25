@@ -1,6 +1,7 @@
 import type { ImportBatchDto } from "../../shared/api";
 import { lexicalFeatures, parseDomain, SUPPORTED_TLDS, type TldPolicy } from "../../shared/domain";
 import { londonDate } from "../../shared/time";
+import { refreshImportStats } from "./settings";
 import { countWords } from "./wordSegmenter";
 import { toImportBatchDto, type ImportBatchDbRow } from "../db/rows";
 import { parseDropListBatches, readLineBatches, toTextStream } from "../providers/nominet/parse";
@@ -461,6 +462,7 @@ async function finaliseImport(db: D1Database, batchId: number, now: Date): Promi
       .bind(batchId, inserted, row.valid_records - inserted + row.in_file_duplicates, removed, now.toISOString()),
     db.prepare("DELETE FROM import_chunks WHERE batch_id = ?").bind(batchId),
   ]);
+  await refreshImportStats(db, now);
   logger.info("import.completed", { batchId, inserted, removed, valid: row.valid_records });
 }
 

@@ -77,10 +77,18 @@ export function DomainExplorer({
   const [starOverrides, setStarOverrides] = useState<Map<number, boolean>>(new Map());
 
   const effectiveFilter = useMemo(() => ({ ...state.filter, ...fixedFilter }), [state.filter, fixedFilter]);
-  const apiQuery = toApiQuery({ ...state, filter: effectiveFilter });
+  const apiQuery = `${toApiQuery({ ...state, filter: effectiveFilter })}&count=false`;
   const query = useQuery({
     queryKey: keys.domains(apiQuery),
     queryFn: () => api.get<Paginated<DomainRow>>(`/domains?${apiQuery}`),
+    placeholderData: keepPreviousData,
+  });
+  // Counted once per filter (not per page or sort): counting scans every matching row.
+  const filterQuery = filterToSearchParams(effectiveFilter).toString();
+  const countQuery = useQuery({
+    queryKey: keys.domainCount(filterQuery),
+    queryFn: () => api.get<{ total: number }>(`/domains/count?${filterQuery}`),
+    staleTime: 5 * 60_000,
     placeholderData: keepPreviousData,
   });
 
@@ -91,9 +99,11 @@ export function DomainExplorer({
   }, [JSON.stringify(effectiveFilter)]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const rows = query.data?.items ?? [];
-  const total = query.data?.total ?? 0;
+  const rowsOnPage = query.data?.items.length ?? 0;
+  const total = countQuery.data?.total ?? null;
+  const hasMore = total === null ? rowsOnPage === state.pageSize : state.page * state.pageSize < total;
   const selectedIds = [...selected];
-  const selectionCount = allFilteredSelected ? total : selectedIds.length;
+  const selectionCount = allFilteredSelected ? (total ?? 0) : selectedIds.length;
 
   // Server data has caught up once the list refetches; drop optimistic overrides.
   useEffect(() => setStarOverrides(new Map()), [query.dataUpdatedAt]);
@@ -244,7 +254,7 @@ export function DomainExplorer({
             "Select domains to research, shortlist or export"
           )}
         </span>
-        {selected.size > 0 && !allFilteredSelected && total > rows.length && rows.every((row) => selected.has(row.id)) && (
+        {selected.size > 0 && !allFilteredSelected && total !== null && total > rows.length && rows.every((row) => selected.has(row.id)) && (
           <button type="button" className="text-xs text-blue-700 underline" onClick={() => setAllFilteredSelected(true)}>
             Select all {formatNumber(total)} matching
           </button>
@@ -258,7 +268,7 @@ export function DomainExplorer({
           >
             Research Selected
           </Button>
-          <Button size="sm" disabled={total === 0} onClick={() => setResearchTarget({ filter: effectiveFilter })}>
+          <Button size="sm" disabled={total === 0 || rowsOnPage === 0} onClick={() => setResearchTarget({ filter: effectiveFilter })}>
             Research All Filtered
           </Button>
           <Button
@@ -318,7 +328,15 @@ export function DomainExplorer({
           loading={query.isFetching}
         />
       )}
-      <Pagination page={state.page} pageSize={state.pageSize} total={total} onPage={state.setPage} onPageSize={state.setPageSize} />
+      <Pagination
+        page={state.page}
+        pageSize={state.pageSize}
+        total={total}
+        rowsOnPage={rowsOnPage}
+        hasMore={hasMore}
+        onPage={state.setPage}
+        onPageSize={state.setPageSize}
+      />
 
       <ResearchConfirmModal
         open={researchTarget !== null}

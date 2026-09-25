@@ -1,6 +1,7 @@
 import { researchSettingsSchema, type ResearchSettings } from "../../shared/api";
 import { DEFAULT_SCORE_WEIGHTS, scoreWeightsSchema, type ScoreWeights } from "../../shared/scoring";
 import { DEFAULT_REGISTRAR, registrarSettingsSchema, type RegistrarSettings } from "../../shared/registrar";
+import { londonToday } from "../../shared/time";
 import { logger } from "../utils/logger";
 import { nowIso } from "../utils/time";
 
@@ -96,4 +97,55 @@ export async function updateRegistrarSettings(db: D1Database, registrar: Registr
   const next = registrarSettingsSchema.parse(registrar);
   await writeSetting(db, "registrar", next);
   return next;
+}
+
+/**
+ * Whole-table counts are expensive in D1 (every scanned row is billed), so they
+ * are computed once per import and cached here.
+ */
+export interface ImportStats {
+  totalDomains: number;
+  listedDomains: number;
+  upcomingDropDates: { dropDate: string; count: number }[];
+  computedAt: string;
+}
+
+export async function getImportStats(db: D1Database): Promise<ImportStats | null> {
+  const value = await readSetting(db, "import_stats");
+  if (typeof value !== "object" || value === null) return null;
+  const stats = value as Partial<ImportStats>;
+  if (typeof stats.totalDomains !== "number" || typeof stats.listedDomains !== "number") return null;
+  return {
+    totalDomains: stats.totalDomains,
+    listedDomains: stats.listedDomains,
+    upcomingDropDates: Array.isArray(stats.upcomingDropDates) ? stats.upcomingDropDates : [],
+    computedAt: typeof stats.computedAt === "string" ? stats.computedAt : "",
+  };
+}
+
+/** Recomputes and stores the cached whole-table stats (a few full scans; run once per import). */
+export async function refreshImportStats(db: D1Database, now: Date = new Date()): Promise<ImportStats> {
+  const [totals, upcoming] = await db.batch([
+    db.prepare(
+      "SELECT (SELECT COUNT(*) FROM domains) AS total, (SELECT COUNT(*) FROM domains WHERE status = 'listed') AS listed",
+    ),
+    db
+      .prepare(
+        `SELECT drop_date, COUNT(*) AS n FROM domains
+         WHERE status = 'listed' AND drop_date >= ?1 GROUP BY drop_date ORDER BY drop_date ASC LIMIT 60`,
+      )
+      .bind(londonToday(now)),
+  ]);
+  const row = (totals?.results?.[0] ?? {}) as { total?: number; listed?: number };
+  const stats: ImportStats = {
+    totalDomains: row.total ?? 0,
+    listedDomains: row.listed ?? 0,
+    upcomingDropDates: ((upcoming?.results ?? []) as { drop_date: string; n: number }[]).map((r) => ({
+      dropDate: r.drop_date,
+      count: r.n,
+    })),
+    computedAt: now.toISOString(),
+  };
+  await writeSetting(db, "import_stats", stats);
+  return stats;
 }

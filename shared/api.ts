@@ -20,7 +20,8 @@ export interface Paginated<T> {
   items: T[];
   page: number;
   pageSize: number;
-  total: number;
+  /** null when the caller asked to skip counting (fetch it via /domains/count instead). */
+  total: number | null;
 }
 
 export interface DomainRow {

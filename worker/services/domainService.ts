@@ -30,28 +30,44 @@ import {
 import { notFound } from "../utils/errors";
 import { buildDomainWhere, buildOrderBy } from "./domainQuery";
 import { getLastCompletedImport } from "./importService";
+import { getImportStats, refreshImportStats } from "./settings";
 
 /** Read-side queries for domains. Always paginated and index-driven. */
 
-export async function listDomains(db: D1Database, query: DomainListQuery, now = new Date()): Promise<Paginated<DomainRow>> {
+export async function listDomains(
+  db: D1Database,
+  query: DomainListQuery,
+  options: { count?: boolean; now?: Date } = {},
+): Promise<Paginated<DomainRow>> {
   const { sort, dir, page, pageSize, ...filter } = query;
+  const now = options.now ?? new Date();
   const where = buildDomainWhere(filter, now);
   const offset = (page - 1) * pageSize;
-  const [rows, count] = await db.batch([
-    db
-      .prepare(`SELECT ${DOMAIN_COLUMNS} FROM domains d ${where.sql} ${buildOrderBy(sort, dir)} LIMIT ? OFFSET ?`)
-      .bind(...where.params, pageSize, offset),
-    db.prepare(`SELECT COUNT(*) AS n FROM domains d ${where.sql}`).bind(...where.params),
-  ]);
-  return {
-    items: ((rows?.results ?? []) as DomainDbRow[]).map(toDomainRow),
-    page,
-    pageSize,
-    total: (count?.results?.[0] as { n: number } | undefined)?.n ?? 0,
-  };
+  const { results } = await db
+    .prepare(`SELECT ${DOMAIN_COLUMNS} FROM domains d ${where.sql} ${buildOrderBy(sort, dir)} LIMIT ? OFFSET ?`)
+    .bind(...where.params, pageSize, offset)
+    .all<DomainDbRow>();
+  // Counting scans every matching row (billed per row), so callers can skip it
+  // and fetch the total separately, once per filter rather than once per page.
+  const total = options.count === false ? null : await countDomains(db, filter, now);
+  return { items: results.map(toDomainRow), page, pageSize, total };
+}
+
+/** True when the filter has no conditions other than the given ones. */
+function isOnly(filter: DomainFilter, allowed: Partial<DomainFilter>): boolean {
+  const entries = Object.entries(filter).filter(([, value]) => value !== undefined && value !== "");
+  return (
+    entries.length === Object.keys(allowed).length &&
+    entries.every(([key, value]) => allowed[key as keyof DomainFilter] === value)
+  );
 }
 
 export async function countDomains(db: D1Database, filter: DomainFilter, now = new Date()): Promise<number> {
+  // Whole-table counts come from the per-import cache instead of a full scan.
+  if (isOnly(filter, {}) || isOnly(filter, { domainStatus: "listed" })) {
+    const cached = await getImportStats(db);
+    if (cached) return isOnly(filter, {}) ? cached.totalDomains : cached.listedDomains;
+  }
   const where = buildDomainWhere(filter, now);
   const row = await db
     .prepare(`SELECT COUNT(*) AS n FROM domains d ${where.sql}`)
@@ -196,45 +212,30 @@ export async function getDomainDetail(db: D1Database, id: number, now = new Date
 
 export async function getDashboardStats(db: D1Database, now = new Date()): Promise<DashboardStats> {
   const today = londonToday(now);
-  const [counts, upcoming] = await db.batch([
+  // Cheap, index-backed live counts; whole-table figures come from the import cache.
+  const [live, cached, lastImport] = await Promise.all([
     db
       .prepare(
         `SELECT
            (SELECT COUNT(*) FROM domains WHERE drop_date = ?1) AS todays,
-           (SELECT COUNT(*) FROM domains) AS total,
-           (SELECT COUNT(*) FROM domains WHERE status = 'listed') AS listed,
            (SELECT COUNT(*) FROM domains WHERE research_status = 'completed') AS researched,
            (SELECT COUNT(*) FROM favourites) AS shortlisted`,
       )
-      .bind(today),
-    db
-      .prepare(
-        `SELECT drop_date, COUNT(*) AS n FROM domains
-         WHERE drop_date >= ?1 AND status = 'listed' GROUP BY drop_date ORDER BY drop_date ASC LIMIT 14`,
-      )
-      .bind(today),
+      .bind(today)
+      .first<{ todays: number; researched: number; shortlisted: number }>(),
+    getImportStats(db).then((stats) => stats ?? refreshImportStats(db, now)),
+    getLastCompletedImport(db),
   ]);
-  const row = (counts?.results?.[0] ?? {}) as {
-    todays?: number;
-    total?: number;
-    listed?: number;
-    researched?: number;
-    shortlisted?: number;
-  };
-  const total = row.total ?? 0;
-  const researched = row.researched ?? 0;
+  const researched = live?.researched ?? 0;
   return {
     today,
-    todaysDomains: row.todays ?? 0,
-    totalDomains: total,
-    listedDomains: row.listed ?? 0,
+    todaysDomains: live?.todays ?? 0,
+    totalDomains: cached.totalDomains,
+    listedDomains: cached.listedDomains,
     researched,
-    unresearched: total - researched,
-    shortlisted: row.shortlisted ?? 0,
-    lastImport: await getLastCompletedImport(db),
-    upcomingDropDates: ((upcoming?.results ?? []) as { drop_date: string; n: number }[]).map((r) => ({
-      dropDate: r.drop_date,
-      count: r.n,
-    })),
+    unresearched: Math.max(0, cached.totalDomains - researched),
+    shortlisted: live?.shortlisted ?? 0,
+    lastImport,
+    upcomingDropDates: cached.upcomingDropDates.filter((day) => day.dropDate >= today).slice(0, 14),
   };
 }
