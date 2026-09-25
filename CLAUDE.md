@@ -26,7 +26,7 @@ Guidance for AI assistants working in this repository. See README.md for product
 
 ## Security
 - Secrets (`DATAFORSEO_*`, `ADMIN_TOKEN`) are Worker secrets. Never return them from the API or log them. `worker/utils/logger.ts` redacts sensitive keys.
-- Every mutating or expensive route uses `requireAdmin` (Cloudflare Access JWT or a bearer token). It fails closed outside development.
+- Every mutating or expensive route uses `requireAdmin` (bearer `ADMIN_TOKEN`). It fails closed outside development.
 - Notes are plain text: render them as React text and never with `dangerouslySetInnerHTML`. CSV cells are escaped against formula injection.
 
 ## Conventions

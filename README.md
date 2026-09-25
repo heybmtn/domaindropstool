@@ -129,20 +129,28 @@ The tests cover:
 
 ## Deploying to Cloudflare
 
-**Plan requirement:** a real Nominet list has hundreds of thousands of rows. Importing it needs the **Workers Paid** plan, for the CPU time (`[limits] cpu_ms` in `wrangler.toml`) and for D1 write volume. From 1 September 2026, D1 on the Free plan rejects queries above the daily row limits.
+**Plan:** full-size Nominet imports (hundreds of thousands of rows) need the **Workers Paid** plan, for CPU time and D1 write volume. From 1 September 2026, D1 on the Free plan rejects queries above the daily row limits. On Paid you can raise the CPU ceiling by uncommenting `[limits]` in `wrangler.toml`.
 
 The D1 database `domaindropstool` (ID in `wrangler.toml`, migration `0001` already applied) and the R2 bucket `domaindropstool-droplists` already exist in the Cloudflare account. For a fresh account, run `npx wrangler d1 create domaindropstool` and `npx wrangler r2 bucket create domaindropstool-droplists` first, and put the new ID in `wrangler.toml`.
 
+### Option A: Cloudflare dashboard (Workers Builds)
+1. Go to **Workers & Pages → Create → Import a repository**, then pick `heybmtn/domaindropstool` and the branch `main`.
+2. Set the **Build command** to `npm run build` and the **Deploy command** to `npx wrangler deploy`.
+3. After the first deploy, go to **Settings → Variables and Secrets** and add the secret `ADMIN_TOKEN` (a long random string). Add `DATAFORSEO_LOGIN` and `DATAFORSEO_PASSWORD` when you have them.
+4. Open the `*.workers.dev` URL, go to **Settings → Admin access**, paste the same token, then use **Imports → Import latest now**. The hourly cron also imports new lists automatically.
+
+### Option B: CLI
 ```bash
 npx wrangler login
 npx wrangler secret put ADMIN_TOKEN             # long random string
-npx wrangler secret put DATAFORSEO_LOGIN
+npx wrangler secret put DATAFORSEO_LOGIN        # optional until you research
 npx wrangler secret put DATAFORSEO_PASSWORD
 npm run db:migrate:remote
 npm run deploy                                  # vite build + wrangler deploy
 ```
 
-Then protect the whole app with **Cloudflare Access**: Workers & Pages → your Worker → Settings → Domains & Routes → Enable Cloudflare Access. If you also set `ACCESS_TEAM_DOMAIN` (`https://<team>.cloudflareaccess.com`) and `ACCESS_AUD` in `[vars]`, the Worker verifies the `Cf-Access-Jwt-Assertion` JWT itself and accepts it for admin operations. Otherwise, admin calls need `Authorization: Bearer <ADMIN_TOKEN>`. You can enter the token under **Settings → Admin access**, which stores it in that browser only.
+### Access control
+Read-only pages are public at the Worker URL. Every admin operation needs `Authorization: Bearer <ADMIN_TOKEN>`: imports, research, notes, shortlist changes, saved filters and settings. You can enter the token under **Settings → Admin access**, which stores it in that browser only. Without the `ADMIN_TOKEN` secret, admin operations are refused in production. To add login-based protection later, extend `worker/utils/auth.ts`.
 
 ### GitHub → Cloudflare
 `.github/workflows/ci.yml` runs typecheck, lint, tests and build on every push and PR. On `main` it also applies D1 migrations and deploys, but only when the repository secrets `CLOUDFLARE_API_TOKEN` (with Workers, D1 and R2 edit permissions) and `CLOUDFLARE_ACCOUNT_ID` exist.
@@ -154,7 +162,6 @@ Then protect the whole app with **Cloudflare Access**: Workers & Pages → your 
 | `DATAFORSEO_LOGIN`, `DATAFORSEO_PASSWORD` | yes | `wrangler secret put` | no |
 | `ADMIN_TOKEN` | optional | `wrangler secret put` | no |
 | `NOMINET_DROP_LIST_URL` | optional | `[vars]` in wrangler.toml | no |
-| `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD` | no | `[vars]` | no |
 | `USE_MOCK_SEO_PROVIDER` | optional | never | no |
 | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | no | no | repository secrets |
 

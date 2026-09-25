@@ -17,8 +17,6 @@ export default defineConfig(async () => {
             USE_MOCK_SEO_PROVIDER: "false",
             DATAFORSEO_LOGIN: "",
             DATAFORSEO_PASSWORD: "",
-            ACCESS_TEAM_DOMAIN: "",
-            ACCESS_AUD: "",
           },
         },
       }),

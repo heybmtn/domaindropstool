@@ -9,8 +9,6 @@ export interface Env {
   ENVIRONMENT?: string;
   NOMINET_DROP_LIST_URL?: string;
   DATAFORSEO_BASE_URL?: string;
-  ACCESS_TEAM_DOMAIN?: string;
-  ACCESS_AUD?: string;
   USE_MOCK_SEO_PROVIDER?: string;
 
   // Secrets

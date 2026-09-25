@@ -208,7 +208,7 @@ export interface SettingsDto {
   queue: { paused: boolean; pauseReason: string | null };
   nominet: { dropListUrl: string; lastImport: ImportBatchDto | null };
   dataforseo: { configured: boolean; baseUrl: string; mock: boolean };
-  auth: { mode: "access" | "token" | "open"; tokenRequired: boolean };
+  auth: { mode: "token" | "open"; tokenRequired: boolean };
 }
 
 // ---------------------------------------------------------------------------

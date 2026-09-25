@@ -20,10 +20,10 @@ enabled = true
 [triggers]
 crons = ["*/2 * * * *", "20 * * * *"]
 
-# Large drop lists need the Workers Paid plan (CPU time + D1 write volume).
-# Raise CPU for the import cron; remove if you are on the Free plan.
-[limits]
-cpu_ms = 120000
+# Full-size Nominet imports need the Workers Paid plan (CPU time + D1 write volume).
+# On Paid you can raise the CPU ceiling for the import cron with:
+# [limits]
+# cpu_ms = 120000
 
 [[d1_databases]]
 binding = "DB"
@@ -46,9 +46,6 @@ simple = { limit = 10, period = 60 }
 ENVIRONMENT = "production"
 NOMINET_DROP_LIST_URL = "https://droplists.nominet.uk/current/uk.csv.gz"
 DATAFORSEO_BASE_URL = "https://api.dataforseo.com/v3"
-# Optional Cloudflare Access verification (see README):
-ACCESS_TEAM_DOMAIN = ""
-ACCESS_AUD = ""
 
 # Secrets (set with `wrangler secret put <NAME>`; never commit):
 #   DATAFORSEO_LOGIN, DATAFORSEO_PASSWORD, ADMIN_TOKEN

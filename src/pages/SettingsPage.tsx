@@ -26,8 +26,8 @@ function AdminAccess() {
     <Card title="Admin access">
       <div className="space-y-2 p-4 text-sm">
         <p className="text-slate-600">
-          Imports, research and edits require admin authorization: either Cloudflare Access (recommended in production) or the
-          <code className="mx-1">ADMIN_TOKEN</code> secret. The token is stored only in this browser.
+          Imports, research and edits require the <code className="mx-1">ADMIN_TOKEN</code> secret set on the Worker. Enter the same
+          value here; it is stored only in this browser.
         </p>
         <div className="flex gap-2">
           <input className="input" type="password" autoComplete="off" placeholder="Admin token" value={token} onChange={(e) => setToken(e.target.value)} />
@@ -198,7 +198,7 @@ export function SettingsPage() {
     <div className="space-y-4">
       <PageHeader title="Settings" />
       {s.auth.mode === "open" && (
-        <Banner tone="warning">No ADMIN_TOKEN or Cloudflare Access configured. Admin operations only work in local development.</Banner>
+        <Banner tone="warning">No ADMIN_TOKEN secret is configured. Admin operations only work in local development.</Banner>
       )}
       <AdminAccess />
       <Card title="Nominet">
