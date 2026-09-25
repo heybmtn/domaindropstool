@@ -136,7 +136,7 @@ The D1 database `domaindropstool` (ID in `wrangler.toml`, migration `0001` alrea
 ### Option A: Cloudflare dashboard (Workers Builds)
 1. Go to **Workers & Pages → Create → Import a repository**, then pick `heybmtn/domaindropstool` and the branch `main`.
 2. Set the **Build command** to `npm run build` and the **Deploy command** to `npx wrangler deploy`.
-3. After the first deploy, go to **Settings → Variables and Secrets** and add the secret `ADMIN_TOKEN` (a long random string). Add `DATAFORSEO_LOGIN` and `DATAFORSEO_PASSWORD` when you have them.
+3. After the first deploy, go to **Settings → Variables and Secrets** and add `ADMIN_TOKEN` (a long random string) with type **Secret**. Add `DATAFORSEO_LOGIN` and `DATAFORSEO_PASSWORD` the same way when you have them. Variables under **Settings → Build** are build-time only and never reach the running Worker.
 4. Open the `*.workers.dev` URL, go to **Settings → Admin access**, paste the same token, then use **Imports → Import latest now**. The hourly cron also imports new lists automatically.
 
 ### Option B: CLI
