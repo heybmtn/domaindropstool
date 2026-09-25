@@ -28,8 +28,7 @@ cpu_ms = 120000
 [[d1_databases]]
 binding = "DB"
 database_name = "domaindropstool"
-# Replace with the ID printed by `wrangler d1 create domaindropstool`.
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "eda5f7a1-b16a-41b3-ac43-a96d5c253ec5"
 migrations_dir = "migrations"
 
 # Raw drop-list archives (one object per imported file) for audit / replay.

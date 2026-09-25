@@ -131,10 +131,10 @@ The tests cover:
 
 **Plan requirement:** a real Nominet list has hundreds of thousands of rows. Importing it needs the **Workers Paid** plan, for the CPU time (`[limits] cpu_ms` in `wrangler.toml`) and for D1 write volume. From 1 September 2026, D1 on the Free plan rejects queries above the daily row limits.
 
+The D1 database `domaindropstool` (ID in `wrangler.toml`, migration `0001` already applied) and the R2 bucket `domaindropstool-droplists` already exist in the Cloudflare account. For a fresh account, run `npx wrangler d1 create domaindropstool` and `npx wrangler r2 bucket create domaindropstool-droplists` first, and put the new ID in `wrangler.toml`.
+
 ```bash
 npx wrangler login
-npx wrangler d1 create domaindropstool          # copy database_id into wrangler.toml
-npx wrangler r2 bucket create domaindropstool-droplists
 npx wrangler secret put ADMIN_TOKEN             # long random string
 npx wrangler secret put DATAFORSEO_LOGIN
 npx wrangler secret put DATAFORSEO_PASSWORD
