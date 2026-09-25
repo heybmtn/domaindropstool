@@ -9,6 +9,12 @@ import { parseId, validate } from "../utils/validate";
 
 export const importRoutes = new Hono<AppEnv>();
 
+/**
+ * How long an HTTP import keeps loading before returning. Small files finish
+ * inline; larger ones return "started" and the two-minute cron finishes loading.
+ */
+const HTTP_LOAD_BUDGET_MS = 15_000;
+
 /** Uploads larger than this should go through the scheduled Nominet import instead. */
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
@@ -22,7 +28,7 @@ importRoutes.post("/", requireAdmin, rateLimit("import"), async (c) => {
   const result = await importFromProvider(
     { db: c.env.DB, archive: c.env.DROPLISTS },
     createDropListProvider(c.env),
-    { force },
+    { force, loadBudgetMs: HTTP_LOAD_BUDGET_MS },
   );
   return c.json(result);
 });
@@ -43,7 +49,11 @@ importRoutes.post("/upload", requireAdmin, rateLimit("import"), async (c) => {
       publishedChecksum: null,
       compressed: bytes[0] === 0x1f && bytes[1] === 0x8b,
     },
-    { force: c.req.query("force") === "true", markMissing: c.req.query("partial") !== "true" },
+    {
+      force: c.req.query("force") === "true",
+      markMissing: c.req.query("partial") !== "true",
+      loadBudgetMs: HTTP_LOAD_BUDGET_MS,
+    },
   );
   return c.json(result);
 });

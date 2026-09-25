@@ -167,6 +167,10 @@ export function buildOrderBy(sort: SortField, dir: "asc" | "desc"): string {
   // DESC puts NULLs last naturally; ASC needs an explicit NULLS LAST so
   // unresearched domains do not crowd the top of metric sorts.
   const direction = dir === "desc" ? "DESC" : "ASC NULLS LAST";
+  if (sort === "drop_date") {
+    // Within a day, list domains in the order they drop.
+    return `ORDER BY d.drop_date ${direction}, d.drop_time ${direction}, d.domain ASC`;
+  }
   const tiebreak = sort === "domain" ? "" : ", d.domain ASC";
   return `ORDER BY ${column} ${direction}${tiebreak}`;
 }

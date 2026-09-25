@@ -97,3 +97,11 @@ describe("buildOrderBy", () => {
     expect(buildOrderBy("domain", "asc")).toBe("ORDER BY d.domain ASC NULLS LAST");
   });
 });
+
+describe("drop-time ordering", () => {
+  it("orders by drop date then exact drop time", () => {
+    expect(buildOrderBy("drop_date", "asc")).toBe(
+      "ORDER BY d.drop_date ASC NULLS LAST, d.drop_time ASC NULLS LAST, d.domain ASC",
+    );
+  });
+});

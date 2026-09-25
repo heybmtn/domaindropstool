@@ -1,7 +1,7 @@
 import { Link } from "react-router";
 import type { DomainRow } from "../../shared/api";
 import type { SortField } from "../../shared/filters";
-import { formatCompact, formatDate, formatMoney, formatNumber, relativeDays } from "../lib/format";
+import { formatCompact, formatDate, formatDropClock, formatDropDay, formatMoney, formatNumber, formatUtc, relativeDays, timeUntil } from "../lib/format";
 import { DomainStatusBadge, ResearchBadge, UserStatusBadge } from "./ui";
 
 export interface DomainColumn {
@@ -12,6 +12,20 @@ export interface DomainColumn {
   align?: "right";
   defaultVisible: boolean;
   render: (row: DomainRow) => React.ReactNode;
+}
+
+function DropTimeCell({ dropTime, dropDate }: { dropTime: string | null; dropDate: string | null }) {
+  if (!dropTime) return <>{formatDate(dropDate)}</>;
+  const countdown = timeUntil(dropTime);
+  return (
+    <span title={formatUtc(dropTime)} className="inline-flex items-baseline gap-2">
+      <span className="text-slate-500">{formatDropDay(dropTime)}</span>
+      <span className="font-mono text-slate-900">{formatDropClock(dropTime)}</span>
+      {countdown && (
+        <span className={`text-[11px] ${countdown === "dropped" ? "text-slate-400" : "font-medium text-amber-700"}`}>{countdown}</span>
+      )}
+    </span>
+  );
 }
 
 function scoreClass(score: number): string {
@@ -33,7 +47,14 @@ export const DOMAIN_COLUMNS: DomainColumn[] = [
       </Link>
     ),
   },
-  { key: "dropDate", label: "Drop Date", sort: "drop_date", defaultVisible: true, render: (row) => formatDate(row.dropDate) },
+  {
+    key: "dropDate",
+    label: "Drop (UK time)",
+    title: "When the domain drops, in UK time (BST/GMT). Hover a value for the exact UTC time.",
+    sort: "drop_date",
+    defaultVisible: true,
+    render: (row) => <DropTimeCell dropTime={row.dropTime} dropDate={row.dropDate} />,
+  },
   { key: "length", label: "Length", sort: "length", align: "right", defaultVisible: true, render: (row) => row.length },
   {
     key: "referringDomains",

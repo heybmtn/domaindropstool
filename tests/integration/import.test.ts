@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { importFromProvider, importFromSource } from "../../worker/services/importService";
+import { continueImport, getImportBatch, importFromProvider, importFromSource } from "../../worker/services/importService";
 import type { DropListProvider, DropListSource } from "../../worker/providers/types";
 import { sha256Hex } from "../../worker/utils/crypto";
 import { csvWith, gzip, SAMPLE_DROP_LIST_CSV, SAMPLE_VALID_DOMAINS } from "../fixtures/dropList";
@@ -150,5 +150,77 @@ describe("importer pre-check failures", () => {
       .prepare("SELECT status, error_message FROM import_batches ORDER BY id DESC LIMIT 1")
       .first<{ status: string; error_message: string }>();
     expect(batch).toEqual({ status: "failed", error_message: "network down" });
+  });
+});
+
+describe("resumable imports", () => {
+  beforeEach(resetDatabase);
+
+  const bulkCsv = (count: number) =>
+    csvWith(Array.from({ length: count }, (_, i): [string, string] => [`bulk${i}.co.uk`, "2026-10-01T12:00:00Z"]));
+  const upload = (text: string): DropListSource => ({
+    source: "upload",
+    url: null,
+    bytes: new TextEncoder().encode(text),
+    publishedChecksum: null,
+    compressed: false,
+  });
+
+  it("prepares, then loads chunk by chunk across calls, then finalises", async () => {
+    const started = await importFromSource({ db: db() }, upload(bulkCsv(25)), {
+      now: NOW,
+      chunkRows: 10,
+      loadBudgetMs: 0,
+    });
+    expect(started.outcome).toBe("started");
+    expect(started.batch).toMatchObject({ status: "running", phase: "loading", chunkCount: 3, chunksDone: 0, validRecords: 25 });
+    expect(await domainNames()).toHaveLength(0);
+
+    // Budget exhausted immediately: nothing more happens, progress is kept.
+    const idle = await continueImport(db(), { now: NOW, budgetMs: 0 });
+    expect(idle).toMatchObject({ chunksDone: 0, completed: false });
+
+    const done = await continueImport(db(), { now: NOW });
+    expect(done).toMatchObject({ chunksDone: 3, chunkCount: 3, completed: true });
+    const batch = await getImportBatch(db(), started.batch!.id);
+    expect(batch).toMatchObject({ status: "completed", phase: null, insertedRecords: 25, duplicateRecords: 0, totalRecords: 25 });
+    expect(await domainNames()).toHaveLength(25);
+    const chunks = await db().prepare("SELECT COUNT(*) AS n FROM import_chunks").first();
+    expect(chunks).toEqual({ n: 0 });
+    expect(await continueImport(db(), { now: NOW })).toBeNull();
+  });
+
+  it("re-loading a chunk (e.g. after an interrupted invocation) is harmless", async () => {
+    const started = await importFromSource({ db: db() }, upload(bulkCsv(12)), { now: NOW, chunkRows: 5, loadBudgetMs: 0 });
+    await continueImport(db(), { now: NOW });
+    // Simulate a second invocation replaying progress from the start.
+    await db().prepare("UPDATE import_batches SET status = 'running', phase = 'loading', chunks_done = 0 WHERE id = ?")
+      .bind(started.batch!.id).run();
+    await continueImport(db(), { now: NOW });
+    expect(await domainNames()).toHaveLength(12);
+  });
+
+  it("stores drop dates as UK days and keeps the exact UTC drop time", async () => {
+    await importFromSource(
+      { db: db() },
+      upload(csvWith([["late.co.uk", "2026-09-25T23:30:15Z"], ["early.co.uk", "2026-09-25T06:00:00Z"]])),
+      { now: NOW },
+    );
+    const { results } = await db().prepare("SELECT domain, drop_date, drop_time FROM domains ORDER BY domain").all();
+    expect(results).toEqual([
+      { domain: "early.co.uk", drop_date: "2026-09-25", drop_time: "2026-09-25T06:00:00.000Z" },
+      { domain: "late.co.uk", drop_date: "2026-09-26", drop_time: "2026-09-25T23:30:15.000Z" },
+    ]);
+  });
+
+  it("fails an import whose progress has stalled, keeping existing data", async () => {
+    const started = await importFromSource({ db: db() }, upload(bulkCsv(4)), { now: NOW, chunkRows: 2, loadBudgetMs: 0 });
+    const later = () => new Date(NOW().getTime() + 31 * 60 * 1000);
+    await expect(importFromSource({ db: db() }, upload(bulkCsv(3)), { now: later })).resolves.toMatchObject({
+      outcome: "imported",
+    });
+    const stale = await getImportBatch(db(), started.batch!.id);
+    expect(stale).toMatchObject({ status: "failed" });
+    expect(stale?.errorMessage).toMatch(/did not finish/);
   });
 });

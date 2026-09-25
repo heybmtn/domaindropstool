@@ -11,9 +11,23 @@ import { keys, useSettings } from "../lib/queries";
 const STATUS_TONES = { running: "blue", completed: "green", failed: "red", skipped: "slate" } as const;
 
 interface ImportResult {
-  outcome: "imported" | "unchanged";
+  outcome: "imported" | "started" | "unchanged";
   message: string;
   batch: ImportBatchDto | null;
+}
+
+/** Loading progress for a running import (chunks are loaded every two minutes by cron). */
+function ImportProgress({ batch }: { batch: ImportBatchDto }) {
+  if (!batch.chunkCount) return <span className="ml-2 text-xs text-slate-500">preparing…</span>;
+  const percent = Math.round((batch.chunksDone / batch.chunkCount) * 100);
+  return (
+    <span className="ml-2 inline-flex items-center gap-2 align-middle text-xs text-slate-600" title="Loading continues in the background">
+      <span className="inline-block h-1.5 w-24 overflow-hidden rounded bg-slate-200">
+        <span className="block h-full bg-blue-600" style={{ width: `${percent}%` }} />
+      </span>
+      {batch.chunksDone} / {batch.chunkCount} chunks
+    </span>
+  );
 }
 
 function Detail({ batch }: { batch: ImportBatchDto }) {
@@ -23,6 +37,7 @@ function Detail({ batch }: { batch: ImportBatchDto }) {
     ["Source URL / file", batch.sourceUrl ?? "—"],
     ["Earliest drop date", batch.dropDate ?? "—"],
     ["Rows in file", formatNumber(batch.totalRecords)],
+    ["Valid .co.uk domains", formatNumber(batch.validRecords)],
     ["New domains", formatNumber(batch.insertedRecords)],
     ["Already known / repeated", formatNumber(batch.duplicateRecords)],
     ["Invalid rows", formatNumber(batch.failedRecords)],
@@ -62,11 +77,11 @@ export function ImportsPage() {
   const history = useQuery({
     queryKey: keys.imports,
     queryFn: () => api.get<{ items: ImportBatchDto[] }>("/import/history"),
-    refetchInterval: (q) => (q.state.data?.items.some((b) => b.status === "running") ? 3_000 : false),
+    refetchInterval: (q) => (q.state.data?.items.some((b) => b.status === "running") ? 10_000 : false),
   });
 
   const onDone = (result: ImportResult) => {
-    toast(result.message, result.outcome === "imported" ? "success" : "info");
+    toast(result.message, result.outcome === "unchanged" ? "info" : "success");
     void client.invalidateQueries();
   };
   const onError = (error: unknown) => {
@@ -150,6 +165,7 @@ export function ImportsPage() {
                     <td className="tabular px-3 py-1.5 text-right">{formatNumber(batch.failedRecords)}</td>
                     <td className="px-3 py-1.5">
                       <Badge tone={STATUS_TONES[batch.status]}>{batch.status}</Badge>
+                      {batch.status === "running" && <ImportProgress batch={batch} />}
                     </td>
                   </tr>
                 ))}

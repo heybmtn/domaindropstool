@@ -170,15 +170,14 @@ Read-only pages are public at the Worker URL. Every admin operation needs `Autho
 ## How it works
 
 ### Import (cron hourly at :20, or `POST /api/import`)
-1. Fetch `uk.csv.gz.sha256`. If that checksum already has a completed import, stop. This check is cheap.
-2. Create an `import_batches` row. A partial unique index allows only one running import at a time.
-3. Download the file, verify its SHA-256 and archive it to R2.
-4. Stream-decompress and parse it. Normalise each domain (trim, lowercase, strip the trailing dot), validate it, keep only `.co.uk`, and dedupe.
-5. Upsert in chunks of 500 rows per statement, sent as one JSON parameter through `json_each`, with 8 statements per D1 batch.
-6. Mark listed domains that are missing from the new file: `dropped` if their drop time has passed, otherwise `removed`.
-7. Record the counts (rows, new, duplicates, invalid, other TLDs, removed) and complete the batch.
+Large lists are imported in bounded steps, so no single Worker invocation has to do everything:
+1. **Prepare.** Fetch `uk.csv.gz.sha256` and skip the import if that checksum already has a completed import. Otherwise download the file, verify its SHA-256, archive it to R2, and stream-parse it once. Each row is normalised (trim, lowercase, strip the trailing dot), validated, filtered to `.co.uk`, deduplicated, and staged in `import_chunks` (5,000 rows per chunk).
+2. **Load.** Chunks are upserted in order, and progress (`chunks_done`) is saved after each one. An HTTP import loads for up to 15 seconds and then returns "started". The two-minute cron keeps loading, about 40 seconds per tick, until every chunk is done. The Imports page shows the progress.
+3. **Finalise.** Mark listed domains that are missing from the file: `dropped` if their drop time has passed, otherwise `removed`. Then record the counts and complete the batch.
 
-If anything fails, the batch becomes `failed` with the error. **Previous data stays available.** Re-importing the same file is safe, because `domains.domain` is UNIQUE.
+If an import stops making progress for 30 minutes, it is marked `failed`. **Previous data always stays available**, and re-running is safe: upserts are idempotent and `domains.domain` is UNIQUE.
+
+**Drop times:** Nominet publishes each drop time in UTC, to the second. The app keeps the exact instant in `domains.drop_time`. `drop_date`, "today"/"tomorrow" and the date filters are UK calendar days, and every time is shown in UK time (BST/GMT) with the UTC time on hover. The domain list sorts by exact drop time within each day.
 
 ### Research queue (cron every 2 minutes)
 - `POST /api/research` only enqueues. It dedupes active jobs, skips domains researched in the last 24 hours unless forced, caps each request (`maxEnqueuePerRequest`), and requires a confirmed count for "Research All Filtered".

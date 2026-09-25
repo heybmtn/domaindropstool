@@ -1,6 +1,6 @@
 import type { Env } from "../env";
 import { createDropListProvider, createSeoProvider } from "../providers";
-import { importFromProvider } from "../services/importService";
+import { continueImport, DEFAULT_LOAD_BUDGET_MS, importFromProvider } from "../services/importService";
 import { researchTick } from "../services/researchProcessor";
 import { errorMessage } from "../utils/errors";
 import { logger } from "../utils/logger";
@@ -11,11 +11,23 @@ export const CRON_IMPORT_CHECK = "20 * * * *";
 
 export async function runImportCheck(env: Env): Promise<void> {
   try {
-    const result = await importFromProvider({ db: env.DB, archive: env.DROPLISTS }, createDropListProvider(env));
+    const result = await importFromProvider({ db: env.DB, archive: env.DROPLISTS }, createDropListProvider(env), {
+      loadBudgetMs: DEFAULT_LOAD_BUDGET_MS,
+    });
     logger.info("cron.import_check", { outcome: result.outcome, batchId: result.batch?.id ?? null });
   } catch (error) {
     // Already recorded on the batch; the previous data remains available.
     logger.error("cron.import_check_failed", { error: errorMessage(error) });
+  }
+}
+
+/** Continues loading an in-progress import (large lists load across several ticks). */
+export async function runImportContinuation(env: Env): Promise<void> {
+  try {
+    const progress = await continueImport(env.DB, { budgetMs: DEFAULT_LOAD_BUDGET_MS });
+    if (progress) logger.info("cron.import_continue", { ...progress });
+  } catch (error) {
+    logger.error("cron.import_continue_failed", { error: errorMessage(error) });
   }
 }
 
@@ -34,6 +46,7 @@ export async function handleScheduled(controller: ScheduledController, env: Env)
       await runImportCheck(env);
       break;
     case CRON_RESEARCH_TICK:
+      await runImportContinuation(env);
       await runResearchTick(env);
       break;
     default:
