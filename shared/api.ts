@@ -154,6 +154,12 @@ export interface ImportBatchDto {
   failedRecords: number;
   skippedRecords: number;
   removedRecords: number;
+  /** Valid, unique .co.uk rows in the file. */
+  validRecords: number | null;
+  /** 'loading' while chunks are being written; null otherwise. */
+  phase: string | null;
+  chunkCount: number | null;
+  chunksDone: number;
   status: ImportStatus;
   errorMessage: string | null;
   startedAt: string;
@@ -264,6 +270,7 @@ export interface ResearchEnqueueResult {
 export interface CsvExportRow {
   domain: string;
   drop_date: string | null;
+  drop_time_uk: string;
   length: number;
   hyphens: number;
   numbers: number;

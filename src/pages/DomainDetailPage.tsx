@@ -20,7 +20,7 @@ import {
   UserStatusBadge,
 } from "../components/ui";
 import { api, errorText } from "../lib/api";
-import { formatCompact, formatDate, formatDateTime, formatMoney, formatNumber, relativeDays } from "../lib/format";
+import { formatCompact, formatDate, formatDropTime, formatMoney, formatNumber, formatUtc, relativeDays, timeUntil } from "../lib/format";
 import { keys, useSetUserStatus, useShortlist, useUnshortlist } from "../lib/queries";
 
 function Stat({ label, value, title }: { label: string; value: React.ReactNode; title?: string }) {
@@ -237,8 +237,15 @@ export function DomainDetailPage() {
             <span className="text-slate-400">.{domain.tld}</span>
           </h1>
           <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-600">
-            <span>Drops {formatDate(domain.dropDate)}</span>
-            {domain.dropTime && <span className="text-xs text-slate-400">({formatDateTime(domain.dropTime)})</span>}
+            {domain.dropTime ? (
+              <span>
+                Drops <strong className="font-mono text-slate-900">{formatDropTime(domain.dropTime)}</strong>{" "}
+                <span className="text-xs text-slate-400">({formatUtc(domain.dropTime)})</span>{" "}
+                {timeUntil(domain.dropTime) && <span className="text-xs font-medium text-amber-700">{timeUntil(domain.dropTime)}</span>}
+              </span>
+            ) : (
+              <span>Drops {formatDate(domain.dropDate)}</span>
+            )}
             <DomainStatusBadge status={domain.status} />
             <ResearchBadge status={domain.researchStatus} />
             <UserStatusBadge status={domain.userStatus} />

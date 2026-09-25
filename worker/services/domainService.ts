@@ -11,6 +11,7 @@ import type {
 } from "../../shared/api";
 import type { DomainFilter, DomainListQuery } from "../../shared/filters";
 import type { ScoreLine } from "../../shared/scoring";
+import { londonToday } from "../../shared/time";
 import { computeWarnings } from "../../shared/warnings";
 import {
   DOMAIN_COLUMNS,
@@ -27,7 +28,6 @@ import {
   type MetricsDbRow,
 } from "../db/rows";
 import { notFound } from "../utils/errors";
-import { todayUtc } from "../utils/time";
 import { buildDomainWhere, buildOrderBy } from "./domainQuery";
 import { getLastCompletedImport } from "./importService";
 
@@ -195,7 +195,7 @@ export async function getDomainDetail(db: D1Database, id: number, now = new Date
 }
 
 export async function getDashboardStats(db: D1Database, now = new Date()): Promise<DashboardStats> {
-  const today = todayUtc(now);
+  const today = londonToday(now);
   const [counts, upcoming] = await db.batch([
     db
       .prepare(

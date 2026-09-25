@@ -200,6 +200,10 @@ export interface ImportBatchDbRow {
   failed_records: number;
   skipped_records: number;
   removed_records: number;
+  valid_records: number | null;
+  phase: string | null;
+  chunk_count: number | null;
+  chunks_done: number | null;
   status: ImportBatchDto["status"];
   error_message: string | null;
   started_at: string;
@@ -221,6 +225,10 @@ export function toImportBatchDto(row: ImportBatchDbRow): ImportBatchDto {
     failedRecords: row.failed_records,
     skippedRecords: row.skipped_records,
     removedRecords: row.removed_records,
+    validRecords: row.valid_records ?? null,
+    phase: row.phase ?? null,
+    chunkCount: row.chunk_count ?? null,
+    chunksDone: row.chunks_done ?? 0,
     status: row.status,
     errorMessage: row.error_message,
     startedAt: row.started_at,

@@ -28,7 +28,7 @@ export function formatDateTime(value: string | null | undefined): string {
     month: "short",
     hour: "2-digit",
     minute: "2-digit",
-    timeZone: "UTC",
+    timeZone: "Europe/London",
     timeZoneName: "short",
   });
 }
@@ -39,4 +39,58 @@ export function relativeDays(value: string | null | undefined, now = new Date())
   if (days <= 0) return "today";
   if (days === 1) return "yesterday";
   return `${days} days ago`;
+}
+
+const ukDateTime = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Europe/London",
+  day: "2-digit",
+  month: "short",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hourCycle: "h23",
+  timeZoneName: "short",
+});
+const ukTime = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Europe/London",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hourCycle: "h23",
+  timeZoneName: "short",
+});
+const ukDay = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", day: "2-digit", month: "short", year: "numeric" });
+
+/** Full UK drop time, e.g. "26 Sept 2026, 00:30:15 BST". */
+export function formatDropTime(iso: string | null | undefined): string {
+  return iso ? ukDateTime.format(new Date(iso)) : "—";
+}
+
+/** UK time of day with zone, e.g. "00:30:15 BST". */
+export function formatDropClock(iso: string | null | undefined): string {
+  return iso ? ukTime.format(new Date(iso)) : "—";
+}
+
+/** UK calendar date of an instant, e.g. "26 Sept 2026". */
+export function formatDropDay(iso: string | null | undefined): string {
+  return iso ? ukDay.format(new Date(iso)) : "—";
+}
+
+/** The exact UTC instant, for tooltips: "2026-09-25 23:30:15 UTC". */
+export function formatUtc(iso: string | null | undefined): string {
+  return iso ? `${iso.slice(0, 10)} ${iso.slice(11, 19)} UTC` : "";
+}
+
+/** Countdown to a drop within the next 24h: "in 2h 14m", "in 45s"; "dropped" once passed; "" if further out. */
+export function timeUntil(iso: string | null | undefined, now: Date = new Date()): string {
+  if (!iso) return "";
+  const seconds = Math.round((new Date(iso).getTime() - now.getTime()) / 1000);
+  if (seconds <= 0) return "dropped";
+  if (seconds > 86_400) return "";
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (hours > 0) return `in ${hours}h ${minutes}m`;
+  if (minutes > 0) return `in ${minutes}m ${seconds % 60}s`;
+  return `in ${seconds}s`;
 }

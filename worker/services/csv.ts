@@ -1,5 +1,6 @@
 import type { CsvExportRow } from "../../shared/api";
 import type { DomainFilter } from "../../shared/filters";
+import { formatLondonDateTime } from "../../shared/time";
 import { buildDomainWhere } from "./domainQuery";
 
 /** CSV export, streamed page by page so large exports never sit in memory. */
@@ -7,6 +8,7 @@ import { buildDomainWhere } from "./domainQuery";
 export const CSV_COLUMNS: (keyof CsvExportRow)[] = [
   "domain",
   "drop_date",
+  "drop_time_uk",
   "length",
   "hyphens",
   "numbers",
@@ -59,13 +61,13 @@ export function exportCsvStream(db: D1Database, scope: ExportScope, now = new Da
   const encoder = new TextEncoder();
   const { where, params, join } = scopeSql(scope, now);
   const sql = `
-    SELECT d.domain, d.drop_date, d.length, d.hyphens, d.digits AS numbers, d.latest_backlinks AS backlinks,
+    SELECT d.domain, d.drop_date, d.drop_time, d.length, d.hyphens, d.digits AS numbers, d.latest_backlinks AS backlinks,
            d.latest_referring_domains AS referring_domains, d.latest_organic_traffic AS organic_traffic,
            d.latest_organic_keywords AS organic_keywords, d.latest_traffic_value AS traffic_value,
            d.research_score, d.user_status AS status,
            (SELECT GROUP_CONCAT(n.note, ' | ') FROM notes n WHERE n.domain_id = d.id) AS notes
     FROM domains d ${join} ${where}
-    ORDER BY d.drop_date ASC, d.domain ASC
+    ORDER BY d.drop_date ASC, d.drop_time ASC, d.domain ASC
     LIMIT ? OFFSET ?`;
   let offset = 0;
   let headerSent = false;
@@ -83,10 +85,14 @@ export function exportCsvStream(db: D1Database, scope: ExportScope, now = new Da
       const { results } = await db
         .prepare(sql)
         .bind(...params, PAGE_SIZE, offset)
-        .all<CsvExportRow>();
+        .all<Omit<CsvExportRow, "drop_time_uk"> & { drop_time: string | null }>();
       offset += results.length;
       if (results.length > 0) {
-        controller.enqueue(encoder.encode(results.map((row) => csvLine(CSV_COLUMNS.map((c) => row[c]))).join("")));
+        const rows: CsvExportRow[] = results.map(({ drop_time, ...row }) => ({
+          ...row,
+          drop_time_uk: formatLondonDateTime(drop_time),
+        }));
+        controller.enqueue(encoder.encode(rows.map((row) => csvLine(CSV_COLUMNS.map((c) => row[c]))).join("")));
       }
       if (results.length < PAGE_SIZE) controller.close();
     },

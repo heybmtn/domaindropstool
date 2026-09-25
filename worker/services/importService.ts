@@ -1,5 +1,6 @@
 import type { ImportBatchDto } from "../../shared/api";
 import { lexicalFeatures, parseDomain, SUPPORTED_TLDS, type TldPolicy } from "../../shared/domain";
+import { londonDate } from "../../shared/time";
 import { toImportBatchDto, type ImportBatchDbRow } from "../db/rows";
 import { parseDropListLines, readLines, toTextStream } from "../providers/nominet/parse";
 import type { DropListProvider, DropListSource } from "../providers/types";
@@ -8,22 +9,33 @@ import { AppError, errorMessage } from "../utils/errors";
 import { logger } from "../utils/logger";
 
 /**
- * Drop-list import pipeline:
- * checksum check → download → verify → archive (R2) → stream-parse →
- * normalise/validate/dedupe → chunked upserts → mark missing → complete batch.
+ * Drop-list import pipeline, split into bounded steps so a large list never
+ * has to fit into a single Worker invocation:
+ *
+ *  1. prepare   checksum check → download → verify → archive (R2) → stream-parse
+ *               once → normalise/validate/dedupe → stage rows in `import_chunks`
+ *  2. load      upsert one staged chunk at a time (`continueImport`), recording
+ *               progress; runs within a time budget and resumes on the next cron tick
+ *  3. finalise  mark missing domains, record statistics, complete the batch
  *
  * Idempotent: a file whose checksum already has a completed batch is skipped,
- * and domains are upserted on their UNIQUE name, so re-imports never duplicate.
+ * domains are upserted on their UNIQUE name, and re-loading a chunk is harmless.
  */
 
 /** Rows per upsert statement (sent as one JSON parameter). */
 const ROWS_PER_STATEMENT = 500;
 /** Statements per D1 batch round-trip. */
-const STATEMENTS_PER_BATCH = 8;
-/** A running batch older than this is assumed dead (e.g. Worker evicted). */
+const STATEMENTS_PER_BATCH = 10;
+/** Rows staged per chunk (~450 KB of JSON; D1 rows may be up to 2 MB). */
+const DEFAULT_CHUNK_ROWS = 5_000;
+/** Chunk rows written per D1 batch while staging. */
+const CHUNK_INSERTS_PER_BATCH = 10;
+/** A running batch with no progress for this long is assumed dead (e.g. Worker evicted). */
 const STALE_RUNNING_MS = 30 * 60 * 1000;
+/** Default wall-time budget for loading chunks in one invocation. */
+export const DEFAULT_LOAD_BUDGET_MS = 40_000;
 
-export type ImportOutcome = "imported" | "unchanged";
+export type ImportOutcome = "imported" | "started" | "unchanged";
 
 export interface ImportResult {
   outcome: ImportOutcome;
@@ -38,6 +50,13 @@ export interface ImportOptions {
   markMissing?: boolean;
   tlds?: readonly TldPolicy[];
   now?: () => Date;
+  /** Rows per staged chunk (tests use small values). */
+  chunkRows?: number;
+  /**
+   * How long to keep loading chunks in this invocation after preparing.
+   * `undefined` loads everything (tests, small uploads); `0` only prepares.
+   */
+  loadBudgetMs?: number;
 }
 
 interface ImportDeps {
@@ -105,14 +124,18 @@ async function checksumAlreadyImported(db: D1Database, checksum: string): Promis
 
 async function failStaleBatches(db: D1Database, now: Date): Promise<void> {
   const cutoff = new Date(now.getTime() - STALE_RUNNING_MS).toISOString();
-  await db
-    .prepare(
-      `UPDATE import_batches SET status = 'failed', completed_at = ?1,
-         error_message = 'Import did not finish (worker stopped). Previous data remains available.'
-       WHERE status = 'running' AND started_at < ?2`,
-    )
-    .bind(now.toISOString(), cutoff)
-    .run();
+  await db.batch([
+    db
+      .prepare(
+        `UPDATE import_batches SET status = 'failed', phase = NULL, completed_at = ?1,
+           error_message = 'Import did not finish (worker stopped). Previous data remains available.'
+         WHERE status = 'running' AND COALESCE(heartbeat_at, started_at) < ?2`,
+      )
+      .bind(now.toISOString(), cutoff),
+    db.prepare(
+      "DELETE FROM import_chunks WHERE batch_id IN (SELECT id FROM import_batches WHERE status != 'running')",
+    ),
+  ]);
 }
 
 async function createBatch(db: D1Database, source: string, sourceUrl: string | null, now: Date): Promise<number> {
@@ -146,7 +169,7 @@ export async function hasNewDropList(db: D1Database, provider: DropListProvider)
   return !(await checksumAlreadyImported(db, checksum));
 }
 
-/** Downloads from the provider and imports. */
+/** Downloads from the provider, prepares the import, and loads within the time budget. */
 export async function importFromProvider(
   deps: ImportDeps,
   provider: DropListProvider,
@@ -178,7 +201,7 @@ export async function importFromProvider(
     await failBatch(deps.db, batchId, error, now());
     throw toImportFailure(error);
   }
-  return runImport(deps, batchId, source, options);
+  return prepareAndLoad(deps, batchId, source, options);
 }
 
 /** Imports a file supplied directly (manual upload). */
@@ -190,7 +213,7 @@ export async function importFromSource(
   const now = options.now ?? (() => new Date());
   await failStaleBatches(deps.db, now());
   const batchId = await createBatch(deps.db, source.source, source.url, now());
-  return runImport(deps, batchId, source, options);
+  return prepareAndLoad(deps, batchId, source, options);
 }
 
 function toImportFailure(error: unknown): AppError {
@@ -202,21 +225,57 @@ function toImportFailure(error: unknown): AppError {
 
 async function failBatch(db: D1Database, batchId: number, error: unknown, now: Date): Promise<void> {
   logger.error("import.failed", { batchId, error });
-  await db
-    .prepare("UPDATE import_batches SET status = 'failed', error_message = ?2, completed_at = ?3 WHERE id = ?1")
-    .bind(batchId, errorMessage(error).slice(0, 1000), now.toISOString())
-    .run();
+  await db.batch([
+    db
+      .prepare(
+        "UPDATE import_batches SET status = 'failed', phase = NULL, error_message = ?2, completed_at = ?3 WHERE id = ?1",
+      )
+      .bind(batchId, errorMessage(error).slice(0, 1000), now.toISOString()),
+    db.prepare("DELETE FROM import_chunks WHERE batch_id = ?").bind(batchId),
+  ]);
 }
 
-async function runImport(
+async function prepareAndLoad(
   deps: ImportDeps,
   batchId: number,
   source: DropListSource,
   options: ImportOptions,
 ): Promise<ImportResult> {
+  const prepared = await prepareImport(deps, batchId, source, options);
+  if (prepared) return prepared;
+  const progress = await continueImport(deps.db, { now: options.now, budgetMs: options.loadBudgetMs });
+  const batch = await getImportBatch(deps.db, batchId);
+  if (batch?.status === "completed") {
+    return {
+      outcome: "imported",
+      message: `Imported ${(batch.validRecords ?? 0).toLocaleString("en-GB")} domains.`,
+      batch,
+    };
+  }
+  if (batch?.status === "failed") {
+    throw toImportFailure(new Error(batch.errorMessage ?? "Import failed."));
+  }
+  logger.info("import.loading_in_background", { batchId, chunksDone: progress?.chunksDone ?? 0 });
+  return {
+    outcome: "started",
+    message: `Import started: ${(batch?.validRecords ?? 0).toLocaleString("en-GB")} domains are loading in the background.`,
+    batch,
+  };
+}
+
+/**
+ * Step 1: verify and archive the file, then parse it once and stage the valid
+ * rows as chunks. Returns a final result when there is nothing to load
+ * (unchanged file); otherwise null and the batch is left in phase 'loading'.
+ */
+async function prepareImport(
+  deps: ImportDeps,
+  batchId: number,
+  source: DropListSource,
+  options: ImportOptions,
+): Promise<ImportResult | null> {
   const { db } = deps;
   const now = options.now ?? (() => new Date());
-  const startedAt = now().toISOString();
   logger.info("import.started", { batchId, source: source.source, bytes: source.bytes.length });
 
   try {
@@ -245,54 +304,157 @@ async function runImport(
     }
 
     const r2Key = await archive(deps.archive, source, checksum, now());
-    if (r2Key) await db.prepare("UPDATE import_batches SET r2_key = ? WHERE id = ?").bind(r2Key, batchId).run();
+    const domainsBefore = await countDomains(db);
+    const stats = await stageChunks(
+      db,
+      batchId,
+      source.bytes,
+      options.tlds ?? SUPPORTED_TLDS,
+      options.chunkRows ?? DEFAULT_CHUNK_ROWS,
+    );
 
-    const before = await countDomains(db);
-    const stats = await ingest(db, batchId, source.bytes, options.tlds ?? SUPPORTED_TLDS, startedAt);
-    const after = await countDomains(db);
-    const inserted = after - before;
-
-    let removed = 0;
-    if (options.markMissing !== false) {
-      const result = await db
-        .prepare(
-          `UPDATE domains
-             SET status = CASE WHEN drop_time IS NOT NULL AND drop_time <= ?2 THEN 'dropped' ELSE 'removed' END,
-                 updated_at = ?2
-           WHERE status = 'listed' AND (last_import_batch_id IS NULL OR last_import_batch_id != ?1)`,
-        )
-        .bind(batchId, now().toISOString())
-        .run();
-      removed = result.meta.changes ?? 0;
-    }
-
+    const timestamp = now().toISOString();
     await db
       .prepare(
-        `UPDATE import_batches SET status = 'completed', drop_date = ?2, total_records = ?3, inserted_records = ?4,
-           duplicate_records = ?5, failed_records = ?6, skipped_records = ?7, removed_records = ?8,
-           completed_at = ?9, error_message = NULL
+        `UPDATE import_batches SET r2_key = ?2, phase = 'loading', chunk_count = ?3, chunks_done = 0,
+           total_records = ?4, valid_records = ?5, in_file_duplicates = ?6, failed_records = ?7,
+           skipped_records = ?8, drop_date = ?9, domains_before = ?10, mark_missing = ?11,
+           import_timestamp = ?12, heartbeat_at = ?12
          WHERE id = ?1`,
       )
       .bind(
         batchId,
-        stats.minDropDate,
+        r2Key,
+        stats.chunks,
         stats.total,
-        inserted,
-        stats.valid - inserted + stats.inFileDuplicates,
+        stats.valid,
+        stats.inFileDuplicates,
         stats.invalid,
         stats.unsupported,
-        removed,
-        now().toISOString(),
+        stats.minDropDate,
+        domainsBefore,
+        options.markMissing === false ? 0 : 1,
+        timestamp,
       )
       .run();
-
-    const batch = await getImportBatch(db, batchId);
-    logger.info("import.completed", { batchId, ...stats, inserted, removed });
-    return { outcome: "imported", message: `Imported ${stats.valid.toLocaleString("en-GB")} domains.`, batch };
+    logger.info("import.prepared", { batchId, ...stats });
+    return null;
   } catch (error) {
     await failBatch(db, batchId, error, now());
     throw toImportFailure(error);
   }
+}
+
+interface LoadingBatchRow {
+  id: number;
+  chunk_count: number;
+  chunks_done: number;
+  import_timestamp: string;
+}
+
+export interface ContinueImportOptions {
+  now?: () => Date;
+  /** Stop starting new chunks after this much wall time; `undefined` = no limit. */
+  budgetMs?: number;
+}
+
+export interface ImportProgress {
+  batchId: number;
+  chunksDone: number;
+  chunkCount: number;
+  completed: boolean;
+}
+
+/**
+ * Steps 2–3: load staged chunks for the running import until done or out of
+ * budget, then finalise. Safe to call from several invocations: upserts are
+ * idempotent and progress only moves forward.
+ */
+export async function continueImport(db: D1Database, options: ContinueImportOptions = {}): Promise<ImportProgress | null> {
+  const now = options.now ?? (() => new Date());
+  const started = Date.now();
+  const batch = await db
+    .prepare(
+      `SELECT id, chunk_count, chunks_done, import_timestamp FROM import_batches
+       WHERE status = 'running' AND phase = 'loading' ORDER BY id LIMIT 1`,
+    )
+    .first<LoadingBatchRow>();
+  if (!batch) return null;
+
+  let chunksDone = batch.chunks_done;
+  try {
+    while (chunksDone < batch.chunk_count) {
+      if (options.budgetMs !== undefined && Date.now() - started >= options.budgetMs) break;
+      const chunk = await db
+        .prepare("SELECT rows_json FROM import_chunks WHERE batch_id = ? AND chunk_index = ?")
+        .bind(batch.id, chunksDone)
+        .first<{ rows_json: string }>();
+      if (chunk) await upsertRows(db, batch.id, JSON.parse(chunk.rows_json) as DomainTuple[], batch.import_timestamp);
+      chunksDone += 1;
+      await db
+        .prepare(
+          "UPDATE import_batches SET chunks_done = MAX(chunks_done, ?2), heartbeat_at = ?3 WHERE id = ?1 AND status = 'running'",
+        )
+        .bind(batch.id, chunksDone, now().toISOString())
+        .run();
+    }
+    if (chunksDone >= batch.chunk_count) {
+      await finaliseImport(db, batch.id, now());
+      return { batchId: batch.id, chunksDone, chunkCount: batch.chunk_count, completed: true };
+    }
+    return { batchId: batch.id, chunksDone, chunkCount: batch.chunk_count, completed: false };
+  } catch (error) {
+    await failBatch(db, batch.id, error, now());
+    return { batchId: batch.id, chunksDone, chunkCount: batch.chunk_count, completed: false };
+  }
+}
+
+async function upsertRows(db: D1Database, batchId: number, rows: DomainTuple[], timestamp: string): Promise<void> {
+  const statement = db.prepare(UPSERT_SQL);
+  const statements: D1PreparedStatement[] = [];
+  for (let i = 0; i < rows.length; i += ROWS_PER_STATEMENT) {
+    statements.push(statement.bind(JSON.stringify(rows.slice(i, i + ROWS_PER_STATEMENT)), timestamp, batchId));
+  }
+  for (let i = 0; i < statements.length; i += STATEMENTS_PER_BATCH) {
+    await db.batch(statements.slice(i, i + STATEMENTS_PER_BATCH));
+  }
+}
+
+async function finaliseImport(db: D1Database, batchId: number, now: Date): Promise<void> {
+  const row = await db
+    .prepare(
+      "SELECT domains_before, valid_records, in_file_duplicates, mark_missing FROM import_batches WHERE id = ? AND status = 'running'",
+    )
+    .bind(batchId)
+    .first<{ domains_before: number; valid_records: number; in_file_duplicates: number; mark_missing: number }>();
+  if (!row) return; // already finalised or failed by another invocation
+
+  let removed = 0;
+  if (row.mark_missing) {
+    const result = await db
+      .prepare(
+        `UPDATE domains
+           SET status = CASE WHEN drop_time IS NOT NULL AND drop_time <= ?2 THEN 'dropped' ELSE 'removed' END,
+               updated_at = ?2
+         WHERE status = 'listed' AND (last_import_batch_id IS NULL OR last_import_batch_id != ?1)`,
+      )
+      .bind(batchId, now.toISOString())
+      .run();
+    removed = result.meta.changes ?? 0;
+  }
+  const inserted = Math.max(0, (await countDomains(db)) - row.domains_before);
+
+  await db.batch([
+    db
+      .prepare(
+        `UPDATE import_batches SET status = 'completed', phase = NULL, inserted_records = ?2,
+           duplicate_records = ?3, removed_records = ?4, completed_at = ?5, heartbeat_at = ?5, error_message = NULL
+         WHERE id = ?1 AND status = 'running'`,
+      )
+      .bind(batchId, inserted, row.valid_records - inserted + row.in_file_duplicates, removed, now.toISOString()),
+    db.prepare("DELETE FROM import_chunks WHERE batch_id = ?").bind(batchId),
+  ]);
+  logger.info("import.completed", { batchId, inserted, removed, valid: row.valid_records });
 }
 
 async function archive(
@@ -317,38 +479,49 @@ async function archive(
   }
 }
 
-interface IngestStats {
+interface StageStats {
   total: number;
   valid: number;
   invalid: number;
   unsupported: number;
   inFileDuplicates: number;
   minDropDate: string | null;
+  chunks: number;
 }
 
-async function ingest(
+/** Parses the file once and stores validated, deduplicated rows as chunks. */
+async function stageChunks(
   db: D1Database,
   batchId: number,
   bytes: Uint8Array,
   tlds: readonly TldPolicy[],
-  timestamp: string,
-): Promise<IngestStats> {
-  const stats: IngestStats = { total: 0, valid: 0, invalid: 0, unsupported: 0, inFileDuplicates: 0, minDropDate: null };
-  const seen = new Set<string>();
-  let pendingRows: DomainTuple[] = [];
-  let pendingStatements: D1PreparedStatement[] = [];
-  const statement = db.prepare(UPSERT_SQL);
-
-  const flushStatements = async () => {
-    if (pendingStatements.length === 0) return;
-    await db.batch(pendingStatements);
-    pendingStatements = [];
+  chunkRows: number,
+): Promise<StageStats> {
+  const stats: StageStats = {
+    total: 0,
+    valid: 0,
+    invalid: 0,
+    unsupported: 0,
+    inFileDuplicates: 0,
+    minDropDate: null,
+    chunks: 0,
   };
-  const flushRows = async () => {
-    if (pendingRows.length === 0) return;
-    pendingStatements.push(statement.bind(JSON.stringify(pendingRows), timestamp, batchId));
-    pendingRows = [];
-    if (pendingStatements.length >= STATEMENTS_PER_BATCH) await flushStatements();
+  const seen = new Set<string>();
+  const insert = db.prepare("INSERT INTO import_chunks (batch_id, chunk_index, rows_json) VALUES (?1, ?2, ?3)");
+  let rows: DomainTuple[] = [];
+  let pending: D1PreparedStatement[] = [];
+
+  const flushInserts = async () => {
+    if (pending.length === 0) return;
+    await db.batch(pending);
+    pending = [];
+  };
+  const flushChunk = async () => {
+    if (rows.length === 0) return;
+    pending.push(insert.bind(batchId, stats.chunks, JSON.stringify(rows)));
+    stats.chunks += 1;
+    rows = [];
+    if (pending.length >= CHUNK_INSERTS_PER_BATCH) await flushInserts();
   };
 
   for await (const record of parseDropListLines(readLines(toTextStream(bytes)))) {
@@ -367,15 +540,16 @@ async function ingest(
     seen.add(domain);
     stats.valid += 1;
 
-    const dropDate = record.dropTime ? record.dropTime.slice(0, 10) : null;
+    // Drop dates are UK calendar days; the exact instant stays in drop_time (UTC).
+    const dropDate = record.dropTime ? londonDate(record.dropTime) : null;
     if (dropDate && (stats.minDropDate === null || dropDate < stats.minDropDate)) stats.minDropDate = dropDate;
     const { length, hyphens, digits } = lexicalFeatures(sld);
-    pendingRows.push([domain, tld, sld, length, hyphens, digits, record.roid, dropDate, record.dropTime]);
-    if (pendingRows.length >= ROWS_PER_STATEMENT) await flushRows();
+    rows.push([domain, tld, sld, length, hyphens, digits, record.roid, dropDate, record.dropTime]);
+    if (rows.length >= chunkRows) await flushChunk();
   }
-  await flushRows();
-  await flushStatements();
+  await flushChunk();
+  await flushInserts();
   return stats;
 }
 
-export const IMPORT_CHUNKING = { ROWS_PER_STATEMENT, STATEMENTS_PER_BATCH } as const;
+export const IMPORT_CHUNKING = { ROWS_PER_STATEMENT, STATEMENTS_PER_BATCH, DEFAULT_CHUNK_ROWS } as const;

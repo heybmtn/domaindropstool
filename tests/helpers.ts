@@ -16,6 +16,7 @@ export async function resetDatabase(): Promise<void> {
       "DELETE FROM favourites",
       "DELETE FROM notes",
       "DELETE FROM domains",
+      "DELETE FROM import_chunks",
       "DELETE FROM import_batches",
       "DELETE FROM settings",
     ].map((sql) => env.DB.prepare(sql)),

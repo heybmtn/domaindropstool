@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { addDays, londonToday } from "./time";
 
 /**
  * Canonical domain filter used by the table, saved filters, "research all
@@ -173,11 +174,10 @@ export function activeFilterCount(filter: DomainFilter): number {
   ).length;
 }
 
-/** Resolves `today` / `tomorrow` / `yesterday` relative to a UTC reference date. */
+/** Resolves `today` / `tomorrow` / `yesterday` to a UK calendar date (drop dates are UK days). */
 export function resolveDate(value: string, now: Date = new Date()): string {
   const offsets: Record<string, number> = { yesterday: -1, today: 0, tomorrow: 1 };
   const offset = offsets[value];
   if (offset === undefined) return value;
-  const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + offset));
-  return date.toISOString().slice(0, 10);
+  return addDays(londonToday(now), offset);
 }

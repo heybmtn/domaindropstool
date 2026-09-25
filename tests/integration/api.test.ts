@@ -95,7 +95,7 @@ describe("API", () => {
     const csv = await (await api("/export?scope=shortlist")).text();
     const [header, row] = csv.trim().split("\r\n");
     expect(header).toBe(
-      "domain,drop_date,length,hyphens,numbers,backlinks,referring_domains,organic_traffic,organic_keywords,traffic_value,research_score,status,notes",
+      "domain,drop_date,drop_time_uk,length,hyphens,numbers,backlinks,referring_domains,organic_traffic,organic_keywords,traffic_value,research_score,status,notes",
     );
     expect(row).toContain("cmd.co.uk");
     expect(row).toContain(`"'=HYPERLINK(""x"") <script>alert(1)</script>"`);
