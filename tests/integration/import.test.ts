@@ -129,3 +129,26 @@ describe("importer", () => {
     await expect(importFromProvider({ db: db() }, new FakeProvider(bytes, null))).rejects.toThrow(/already running/);
   });
 });
+
+describe("importer pre-check failures", () => {
+  beforeEach(resetDatabase);
+
+  it("records a failed batch when the checksum check itself throws", async () => {
+    const provider: DropListProvider = {
+      source: "nominet",
+      getLatestChecksum: async () => {
+        throw new TypeError("network down");
+      },
+      getLatest: async () => {
+        throw new Error("should not be called");
+      },
+    };
+    await expect(importFromProvider({ db: db() }, provider, { now: NOW })).rejects.toThrow(
+      "Import failed. Previous data remains available.",
+    );
+    const batch = await db()
+      .prepare("SELECT status, error_message FROM import_batches ORDER BY id DESC LIMIT 1")
+      .first<{ status: string; error_message: string }>();
+    expect(batch).toEqual({ status: "failed", error_message: "network down" });
+  });
+});

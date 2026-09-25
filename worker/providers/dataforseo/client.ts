@@ -1,4 +1,5 @@
 import { logger } from "../../utils/logger";
+import { platformFetch, USER_AGENT } from "../fetch";
 import { ProviderError } from "../types";
 
 /**
@@ -46,7 +47,7 @@ export class DataForSeoClient {
   constructor(
     private readonly baseUrl: string,
     private readonly credentials: DataForSeoCredentials,
-    private readonly fetcher: typeof fetch = fetch,
+    private readonly fetcher: typeof fetch = platformFetch,
     private readonly timeoutMs = 60_000,
   ) {}
 
@@ -69,12 +70,12 @@ export class DataForSeoClient {
       response = await this.fetcher(url, {
         method: init.method,
         body: init.body,
-        headers: { Authorization: this.authorization, "Content-Type": "application/json" },
+        headers: { Authorization: this.authorization, "Content-Type": "application/json", "User-Agent": USER_AGENT },
         signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch (error) {
       logger.warn("dataforseo.network_error", { path, error });
-      throw new ProviderError("DataForSEO request failed (network error).", { retryable: true });
+      throw new ProviderError("DataForSEO request failed (network error).", { retryable: true, cause: error });
     }
 
     if (response.status === 401 || response.status === 403) {
