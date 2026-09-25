@@ -123,11 +123,18 @@ export interface SeoProvider {
 export class ProviderError extends Error {
   constructor(
     message: string,
-    readonly options: { retryable: boolean; pauseQueue?: boolean; status?: number; providerCode?: number } = {
+    readonly options: {
+      retryable: boolean;
+      pauseQueue?: boolean;
+      status?: number;
+      providerCode?: number;
+      /** Underlying error, kept for logs and tests (never shown to users). */
+      cause?: unknown;
+    } = {
       retryable: false,
     },
   ) {
-    super(message);
+    super(message, options.cause === undefined ? undefined : { cause: options.cause });
     this.name = "ProviderError";
   }
 

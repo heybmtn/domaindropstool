@@ -1,3 +1,4 @@
+import { platformFetch, USER_AGENT } from "../fetch";
 import { ProviderError, type DropListProvider, type DropListSource } from "../types";
 import { parseChecksumFile } from "./parse";
 
@@ -11,7 +12,7 @@ export class NominetDropListProvider implements DropListProvider {
 
   constructor(
     private readonly url: string,
-    private readonly fetcher: typeof fetch = fetch,
+    private readonly fetcher: typeof fetch = platformFetch,
   ) {}
 
   get checksumUrl(): string {
@@ -19,7 +20,7 @@ export class NominetDropListProvider implements DropListProvider {
   }
 
   async getLatestChecksum(): Promise<string | null> {
-    const response = await this.fetcher(this.checksumUrl, { headers: { Accept: "text/plain" } });
+    const response = await this.fetcher(this.checksumUrl, { headers: { Accept: "text/plain", "User-Agent": USER_AGENT } });
     if (!response.ok) {
       // A missing checksum file is not fatal: the importer hashes the file itself.
       return null;
@@ -29,7 +30,7 @@ export class NominetDropListProvider implements DropListProvider {
 
   async getLatest(): Promise<DropListSource> {
     const publishedChecksum = await this.getLatestChecksum().catch(() => null);
-    const response = await this.fetcher(this.url);
+    const response = await this.fetcher(this.url, { headers: { "User-Agent": USER_AGENT } });
     if (!response.ok) {
       throw new ProviderError(`Nominet drop list download failed with HTTP ${response.status}.`, {
         retryable: response.status >= 500,

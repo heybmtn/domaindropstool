@@ -153,9 +153,21 @@ export async function importFromProvider(
   options: ImportOptions = {},
 ): Promise<ImportResult> {
   const now = options.now ?? (() => new Date());
-  if (!options.force && !(await hasNewDropList(deps.db, provider))) {
-    logger.info("import.unchanged", { source: provider.source });
-    return { outcome: "unchanged", message: "The current drop list has already been imported.", batch: null };
+  if (!options.force) {
+    let isNew: boolean;
+    try {
+      isNew = await hasNewDropList(deps.db, provider);
+    } catch (error) {
+      // Record the failure so it is visible in import history, then surface a safe error.
+      await failStaleBatches(deps.db, now());
+      const batchId = await createBatch(deps.db, provider.source, null, now());
+      await failBatch(deps.db, batchId, error, now());
+      throw toImportFailure(error);
+    }
+    if (!isNew) {
+      logger.info("import.unchanged", { source: provider.source });
+      return { outcome: "unchanged", message: "The current drop list has already been imported.", batch: null };
+    }
   }
   await failStaleBatches(deps.db, now());
   const batchId = await createBatch(deps.db, provider.source, null, now());
