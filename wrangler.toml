@@ -1,0 +1,51 @@
+#:schema node_modules/wrangler/config-schema.json
+# Cloudflare Worker configuration for the .co.uk Domain Drop Research Tool.
+# Docs: https://developers.cloudflare.com/workers/wrangler/configuration/
+name = "domaindropstool"
+main = "worker/index.ts"
+compatibility_date = "2026-08-15"
+workers_dev = true
+
+# React SPA served as static assets; /api/* is always handled by the Worker.
+[assets]
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*"]
+
+[observability]
+enabled = true
+
+# Cron Triggers (UTC):
+#  - every 2 minutes: process a bounded batch of queued research jobs
+#  - hourly at :20: check the Nominet checksum and import a new drop list if one exists
+[triggers]
+crons = ["*/2 * * * *", "20 * * * *"]
+
+# Full-size Nominet imports need the Workers Paid plan (CPU time + D1 write volume).
+# On Paid you can raise the CPU ceiling for the import cron with:
+# [limits]
+# cpu_ms = 120000
+
+[[d1_databases]]
+binding = "DB"
+database_name = "domaindropstool"
+database_id = "eda5f7a1-b16a-41b3-ac43-a96d5c253ec5"
+migrations_dir = "migrations"
+
+# Raw drop-list archives (one object per imported file) for audit / replay.
+[[r2_buckets]]
+binding = "DROPLISTS"
+bucket_name = "domaindropstool-droplists"
+
+# Rate limiter for expensive endpoints (import, research enqueue, connection test).
+[[ratelimits]]
+name = "EXPENSIVE_LIMITER"
+namespace_id = "1001"
+simple = { limit = 10, period = 60 }
+
+[vars]
+ENVIRONMENT = "production"
+NOMINET_DROP_LIST_URL = "https://droplists.nominet.uk/current/uk.csv.gz"
+DATAFORSEO_BASE_URL = "https://api.dataforseo.com/v3"
+
+# Secrets (set with `wrangler secret put <NAME>`; never commit):
+#   DATAFORSEO_LOGIN, DATAFORSEO_PASSWORD, ADMIN_TOKEN

@@ -1,0 +1,10 @@
+# Copy to .dev.vars for local development (`wrangler dev` / `vite dev`). Never commit .dev.vars.
+DATAFORSEO_LOGIN=
+DATAFORSEO_PASSWORD=
+NOMINET_DROP_LIST_URL=https://droplists.nominet.uk/current/uk.csv.gz
+# Bearer token required for admin operations (import, research, settings writes).
+ADMIN_TOKEN=change-me-local-token
+# Local dev relaxes auth only when ENVIRONMENT=development AND ADMIN_TOKEN is empty.
+ENVIRONMENT=development
+# Set to "true" to use a deterministic fake SEO provider locally (no DataForSEO calls, no cost).
+USE_MOCK_SEO_PROVIDER=false
